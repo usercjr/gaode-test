@@ -1,0 +1,88 @@
+You are an expert TypeScript/Node.js engineer. I want you to upgrade my existing “trip → map JSON generator” project by adding a new Geocoding module based on **Amap (高德地图 Web 服务 API)** while keeping the original Baidu version intact.
+
+### ✅ Background
+I currently have a project that:
+- Parses travel itinerary text
+- Uses Baidu API for geocoding
+- Outputs a JSON for map visualization
+
+Now I want to support **Amap version** using the following requirements.
+
+---
+
+## 📌 TASK: Create a **parallel Amap version** of the geocoding and output module
+
+### 1️⃣ Create a new file: `src/geocodeAmap.js`
+
+Requirements:
+- Use Amap Web Service API (base URL: `https://restapi.amap.com/v3`)
+- Geocoding logic requirements (C-level intelligence):
+  1. First call Place Search API (`/place/text`) to get POI
+  2. If no result or missing fields, call Geocoding API (`/geocode/geo`) as fallback
+  3. If still no result, return `{ status: "not_found", location: null }`
+- Output enhanced POI data with fields:
+
+{
+"name": "string",
+"location": "lng,lat",
+"address": "string",
+"type": "string",
+"adcode": "string",
+"citycode": "string",
+"status": "ok" | "geocoded" | "not_found"
+}
+
+markdown
+复制代码
+
+- Should export an async function:  
+  `export async function geocodeAmapAll(itinerary, { key, city })`
+
+### 2️⃣ Create a new file: `src/toAmapJson.js`
+
+Function name: `toAmapJson(itinerary, title)`
+- Input format: `{ days: [...] }`
+- Output must keep day grouping and place order
+- Should preserve notes if present
+- Should return a JSON safe for Amap visualization usage
+
+### 3️⃣ Create a new example script: `example/runAmapExample.js`
+
+Behavior:
+- Load `example/input.txt`
+- Parse using existing parser
+- Use new `geocodeAmapAll` with Amap key
+- Convert using `toAmapJson`
+- Print formatted JSON and save as `example/output-amap.json`
+
+### 4️⃣ DO NOT DELETE existing Baidu version
+- Keep original files as-is
+- New Amap files must not overwrite Baidu files
+
+### 5️⃣ Implementation Preferences
+- Use `node-fetch` for HTTP requests (same as Baidu version)
+- Use async/await and clean modular code
+- Add clear console logs when geocoding POIs
+
+### 6️⃣ After generating code, provide:
+- Instructions how to run the Amap example:
+node example/runAmapExample.js
+
+yaml
+复制代码
+- Example `.env` variable name for Amap key (suggest: `AMAP_WEB_KEY`)
+
+---
+
+When you're ready, respond with:
+1. The generated files
+2. Ask me if I want auto-refactor to TypeScript version afterward
+Do not shorten or simplify code. Follow the spec strictly.
+
+
+
+
+
+
+
+

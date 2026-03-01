@@ -1,0 +1,303 @@
+项目目标与产物说明
+
+本项目的目标是：
+基于 input.txt 行程描述文件，生成带有交互行程侧栏、地图标记、路线规划的静态文件 output-map.html，用户无需本地服务器即可直接双击打开查看行程地图。
+
+最终生成的 output-map.html 需具备以下能力：
+
+可视化展示每日行程的地点标记（Marker）
+
+支持多日切换
+
+支持交通方式切换（驾车、步行、公交）
+
+自动调用高德路线规划，并展示路线折线
+
+使用分离式结构（地图逻辑放入 src/map.js，HTML单独生成）
+
+美化UI，使侧栏更现代化、清晰、适合展示给用户
+
+使用缓存机制：
+
+地址地理编码缓存（减少API调用）
+
+路线规划缓存（减少重复路线查询）
+
+支持双模式 Key 注入机制（Dev自动注入，Build保留占位符）
+
+📁 文件与结构要求（必须遵守）
+
+生成的代码必须严格符合以下结构，不得擅自调整：
+
+project-root/
+│
+├── input.txt                      # 用户输入行程文本（来源）
+├── output-map.html                # ✅ 生成的最终静态地图文件（可直接打开）
+│
+├── output-amap.json               # ✅ 解析后的中间数据（含坐标 & 补充信息）
+│
+├── src/
+│   ├── map.js                     # ✅ 封装地图渲染逻辑（IIFE + 全局暴露）
+│   └── ...（如需，可扩展其他辅助模块）
+│
+├── template.singlefile.html       # 可用于构建 output-map.html 的基础模板
+│
+└── example/
+    └── runAmapExample.js          # 示例生成脚本（input → json → html）
+
+
+Key 点要求：
+
+项	要求
+output-map.html	必须位于项目根目录
+map.js	必须位于 src/map.js
+HTML 内不允许包含地图逻辑 JavaScript（仅加载 script）	
+不得混用 inline script 与动态逻辑（除必须的注入点）	
+🧠 数据处理流水线（作为开发遵循）
+
+生成 output-map.html 必须遵循以下处理顺序：
+
+input.txt
+    ↓ parse（解析 DSL）
+amap-raw.json（无需输出）
+    ↓ geocoding（地址转经纬度）+ 缓存（本地JSON）
+output-amap.json
+    ↓ HTML模板渲染 + UI填充 + 注入 Key 占位符或真实值
+output-map.html
+
+
+地理编码与路线规划均需使用 缓存优先策略
+
+渲染 HTML 时 map.js 必须以 <script src="./src/map.js"></script> 方式加载
+
+
+
+
+
+生成规范：output-map.html
+
+请按以下规范生成 output-map.html：
+
+✅ HTML 基础结构要求
+
+必须为 可直接双击运行 的静态文件（无需服务器）
+
+不得包含除 Key 注入点外的业务逻辑 JS
+
+必须包含一个固定布局：左侧行程侧栏 + 右侧地图视图
+
+页面结构要求如下：
+
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>{{TRIP_TITLE}} · 行程地图</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css" />
+  <style>
+    /* ✅ UI 美化（需比默认模板更现代） */
+    body, html { margin: 0; padding: 0; height: 100%; width: 100%; }
+    .page { display: flex; height: 100vh; width: 100vw; }
+    .sidebar {
+      width: 300px; padding: 16px; overflow-y: auto; background: #fff;
+      border-right: 1px solid #eee; box-shadow: 2px 0 6px rgba(0,0,0,0.06);
+    }
+    #map { flex: 1; }
+    .day-item { padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 6px; }
+    .day-item.active { background: #007bff; color: white; }
+    .mode-btn.active { background: #28a745 !important; color: white !important; }
+    .poi-badge {
+      background: #1677ff; color: white; padding: 2px 6px; border-radius: 6px;
+      font-size: 12px; display: inline-block; margin-right: 6px;
+    }
+  </style>
+
+  <!-- ✅ 仅注入 Key，不放逻辑 -->
+  <!-- {{AMAP_JS_KEY_INJECT}} -->
+</head>
+<body>
+  <div class="page">
+    <div class="sidebar">
+      <h3 id="trip-title">{{TRIP_TITLE}}</h3>
+      <div id="day-list"></div>
+      <hr />
+      <div>
+        <label>出行方式：</label>
+        <div id="mode-buttons"></div>
+      </div>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <!-- ✅ 外部加载 map.js（禁止 inline 逻辑代码） -->
+  <script src="./src/map.js"></script>
+
+  <!-- ✅ 内联仅允许注入渲染数据 -->
+  <script id="trip-data" type="application/json">{{TRIP_DATA_JSON}}</script>
+</body>
+</html>
+
+必须支持的占位符（构建时替换）
+占位符	含义
+{{TRIP_TITLE}}	行程标题（若无则填“我的行程地图”）
+{{TRIP_DATA_JSON}}	经缓存处理后的 JSON 数据，不格式化，直接嵌入
+{{AMAP_JS_KEY_INJECT}}	注入 <script src="...key=xxx"> 或占位符
+🧭 生成规范：src/map.js
+1. 全局暴露（符合你选择的模块模式 #2）
+
+必须包装为 IIFE，并暴露到 window：
+
+(function (global) {
+  const AmapTripRenderer = {
+    initMap() {},
+    renderDays() {},
+    renderRoutes() {},
+    clearMap() {},
+    // ...
+  };
+
+  global.AmapTripRenderer = AmapTripRenderer;
+})(window);
+
+2. 功能模块必须包含
+模块	说明
+initMap(container, center)	初始化地图
+renderDayList(days)	渲染侧栏 Day 列表
+renderMarkers(day)	渲染当天地点 marker
+renderRoutes(day, mode)	显示路线，支持驾车/步行/公交
+clearMap()	清理图层
+setupModeSwitching()	模式按钮逻辑
+3. UI 要求
+
+按钮状态切换 .active class
+
+当天行程高亮
+
+地图初始位置使用第一个地点坐标
+
+4. 缓存要求（必须实现）
+
+缓存文件形式留在本地 JSON，可读写：
+
+缓存类型	作用	Key 格式
+Geocoding 缓存	减少地理编码 API 调用	address → {lng,lat}
+Route 缓存	减少路线规划 API 调用	"${from.lng},${from.lat} -> ${to.lng},${to.lat} (${mode})"
+5. 逻辑注意点
+
+地图加载失败要 console.warn，但不阻塞渲染其他天
+
+公交路线需根据城市切换 city
+
+normalizeLocation 输出 {lng,lat} 对象（禁止使用数组）
+
+
+
+
+
+
+
+高德 JSAPI Key 不可直接硬编码在 src/map.js 中，必须按以下模式处理：
+
+✅ Dev 模式（本地开发）
+
+行为：
+
+从 .env 或 config 读取 Key
+
+自动注入 <script src="https://webapi.amap.com/maps?...key=XXXX"></script> 到 output-map.html 的 {{AMAP_JS_KEY_INJECT}}
+
+用户无需手动修改任何文件即可运行
+
+📦 Build / 发布模式
+
+行为：
+
+{{AMAP_JS_KEY_INJECT}} 替换为 占位符：
+
+<!-- 请在此处填入你的高德 Key -->
+<!-- <script src="https://webapi.amap.com/maps?v=2.0&key=YOUR_KEY&plugin=AMap.Driving,AMap.Walking,AMap.Transfer"></script> -->
+
+
+不应包含真实 Key，以防泄露
+
+Key 注入示例（Dev 模式替换）：
+<script src="https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}&plugin=AMap.Driving,AMap.Walking,AMap.Transfer"></script>
+
+
+构建脚本应负责决定注入哪种模式版本。
+
+🧠 缓存策略要求（必须实现）
+
+缓存文件存储位置可为根目录 .cache/ 或 data/cache/，推荐使用 JSON 文件。
+
+1. Geocoding 缓存规则
+
+Key 格式："<address>"
+Value格式：{ "lng": 121.4737, "lat": 31.2304 }
+
+流程：
+
+若 address 在缓存中 → 直接使用缓存
+若未命中 → 调用 geocode API → 写入缓存 → 使用结果
+
+2. Route 缓存规则
+
+Key 格式：
+
+"${from.lng},${from.lat} -> ${to.lng},${to.lat} (${mode})"
+
+
+Value格式：路线点数组（用于绘制 polyline）
+
+流程：
+
+若路线在缓存中 → 使用缓存绘制路线
+若未命中 → 调用路线API → 存入缓存 → 绘制
+
+缓存写入要求：
+
+必须异步写入 JSON（避免阻塞）
+
+不要求合并文件，可使用两个独立的缓存文件：
+
+geocode-cache.json
+
+route-cache.json
+
+🚫 禁止事项（Cursor 必须遵守）
+
+以下内容在任何生成中 禁止出现：
+
+禁止内容	理由
+将地图逻辑写入 output-map.html	必须在 src/map.js
+在 map.js 中硬编码 API Key	Key 必须注入或占位符
+移动或更改 output-map.html 输出路径	必须在项目根目录生成
+使用 ESModule 输出（import/export）	已选择 IIFE 全局模式
+修改已确认的目录结构	会导致构建脚本失效
+删除缓存功能	已选择功能 #1 和 #2，必须实现
+🧪 测试验收标准（Cursor 生成完成后需满足）
+
+执行生成脚本（例如 node example/runAmapExample.js 或你项目对应命令）后必须满足：
+
+✅ 生成 output-map.html
+
+✅ 双击即可运行，无需服务器
+
+✅ 地图加载成功
+
+✅ Day 切换高亮正常
+
+✅ 出行方式切换正常
+
+✅ 有缓存文件生成并被使用（可验证命中/未命中日志）
+
+✅ UI 比原始版本明显更现代 & 美观
+
+📍 使用说明（可附在项目 README）
+
+修改 input.txt
+
+运行生成脚本
+
+打开 output-map.html 即可查看行程地图

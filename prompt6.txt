@@ -1,0 +1,210 @@
+# 目标
+在现有 Amap 行程地图中，给 “路线折线 Polyline” 增加点击交互：**点击一段线路后，在线路中点位置直接显示该段预计用时（分钟）**。显示为紧贴路线的文本徽标（pill 样式），再次点击同一条线路会切换显示/隐藏；切换 Day 或出行方式时清理所有旧的用时标记。
+
+# 现状（已存在的能力）
+- src/map.js 已能：渲染 Marker、画出步行/驾车/公交路线（Polyline）、Day 切换、模式切换。
+- 获取路线时，我们可以拿到时间：
+  - 驾车/步行：`result.routes[0].time`（单位：秒）
+  - 公交：`result.plans[0].time`（单位：分钟）
+- 我们可以给 polyline 绑定自定义字段，例如：`polyline._durationMin`、`polyline._mode`、`polyline._labelOverlay`。
+
+# 需求细化
+1. 点击任意一段路线（Polyline）：
+   - 若当前这条线**没有显示**标签：在路线**几何中点**位置添加一个小标签（使用 `AMap.Text` 或带自定义 DOM 的 `AMap.Marker`），内容为“🚗 23.5 分钟 / 🚶 8.0 分钟 / 🚌 41.0 分钟”，单位统一为“分钟（min）”。驾车/步行需把秒换算为分钟并保留 1 位小数。
+   - 若当前这条线**已经显示**标签：再次点击隐藏标签（移除覆盖物）。
+2. 同时满足：
+   - 切换 Day 或切换模式时，需要**自动清理**之前添加的所有标签覆盖物（避免残留）。
+   - 标签位置取 polyline 路径的 **中点**（`getPath()[Math.floor(len/2)]`）。
+   - 标签样式为圆角 pill，半透明白底、深色字、轻微阴影，字号 12px；随地图缩放移动。
+3. 兼容线路分段批量渲染：一个 Day 可能有多段线路；每一段都可独立点击显示/隐藏用时。
+4. 不使用 InfoWindow；标签应作为 `AMap.Text` 或自定义 DOM 的 `AMap.Marker` 添加到 `map`。
+
+# 实现要求（对 src/map.js 的修改点）
+请仅修改/追加 src/map.js 中涉及的函数，不要改变文件对外结构（IIFE + window.AmapTripRenderer），并满足以下事项：
+
+## A. 路线创建处：缓存 “分钟用时” 与 “模式”
+在创建 polyline 的同时，计算分钟数并存放到 polyline 对象上：
+- 驾车/步行：
+const seconds = result.routes[0].time || 0;
+const minutes = +(seconds / 60).toFixed(1);
+polyline._durationMin = minutes;
+polyline._mode = 'drive' | 'walk';
+
+diff
+复制代码
+- 公交：
+const minutes = +(result.plans[0].time || 0); // already minutes
+polyline._durationMin = minutes;
+polyline._mode = 'transit';
+
+perl
+复制代码
+
+并在返回/加入地图前，为 polyline 绑定点击事件处理器（见 C）。
+
+## B. 清理钩子
+在 `clearOverlays()` 中，除移除 `markers` 和 `polylines` 外，还需要移除本次渲染过程中为每条 polyline 生成的标签（如果有）：
+- 若 polyline._labelOverlay 存在，调用 `map.remove(polyline._labelOverlay)`。
+- 然后把 polyline._labelOverlay 置空。
+- 最后与既有逻辑一起清空 `STATE.polylines = []`。
+
+## C. 点击事件：为线路创建/切换标签
+新增一个工具函数，负责创建/销毁标签：
+
+function toggleRouteDurationLabel(polyline, map) {
+// 若已有则移除
+if (polyline._labelOverlay) {
+map.remove(polyline._labelOverlay);
+polyline._labelOverlay = null;
+return;
+}
+// 生成文本
+const mode = polyline._mode || 'drive';
+const icon = mode === 'drive' ? '🚗' : (mode === 'walk' ? '🚶' : '🚌');
+const text = ${icon} 预计 ${polyline._durationMin} 分钟;
+
+// 取路径中点坐标
+const path = polyline.getPath();
+if (!path || !path.length) return;
+const mid = path[Math.floor(path.length / 2)];
+
+// 用 AMap.Text 生成轻量文本覆盖物（更简单）
+const label = new AMap.Text({
+text,
+position: mid,
+style: {
+'background-color': 'rgba(255,255,255,0.9)',
+'border-radius': '999px',
+'padding': '4px 10px',
+'font-size': '12px',
+'color': '#111',
+'box-shadow': '0 2px 6px rgba(0,0,0,0.15)',
+'border': '1px solid #e5e7eb'
+},
+zIndex: 120
+});
+map.add(label);
+polyline._labelOverlay = label;
+}
+
+复制代码
+
+在创建每条 polyline 之后，注册点击事件：
+polyline.on('click', () => toggleRouteDurationLabel(polyline, STATE.map));
+
+perl
+复制代码
+
+## D. 三种路线函数返回 polyline 并写入 _durationMin
+在既有的 `drivingRoute / walkingRoute / transitRoute` 三个函数（或等价函数）里，生成 polyline 时要顺便写入 `_durationMin` 和 `_mode` 并返回 polyline。示例：
+
+### 驾车
+function drivingRoute(from, to) {
+return new Promise((resolve, reject) => {
+STATE.services.driving.search([from.lng, from.lat], [to.lng, to.lat], (status, result) => {
+if (status === 'complete' && result.routes && result.routes[0]) {
+const path = result.routes[0].steps.flatMap(s => s.path);
+const seconds = result.routes[0].time || 0;
+const minutes = +(seconds / 60).toFixed(1);
+const poly = new AMap.Polyline({
+path,
+strokeColor: '#1677ff',
+strokeWeight: 5,
+strokeOpacity: 0.9
+});
+poly._durationMin = minutes;
+poly._mode = 'drive';
+poly.on('click', () => toggleRouteDurationLabel(poly, STATE.map));
+resolve(poly);
+} else {
+reject(result);
+}
+});
+});
+}
+
+shell
+复制代码
+
+### 步行
+function walkingRoute(from, to) {
+return new Promise((resolve, reject) => {
+STATE.services.walking.search([from.lng, from.lat], [to.lng, to.lat], (status, result) => {
+if (status === 'complete' && result.routes && result.routes[0]) {
+const path = result.routes[0].steps.flatMap(s => s.path);
+const seconds = result.routes[0].time || 0;
+const minutes = +(seconds / 60).toFixed(1);
+const poly = new AMap.Polyline({
+path,
+strokeColor: '#1677ff',
+strokeWeight: 4,
+strokeStyle: 'dashed',
+strokeOpacity: 0.9
+});
+poly._durationMin = minutes;
+poly._mode = 'walk';
+poly.on('click', () => toggleRouteDurationLabel(poly, STATE.map));
+resolve(poly);
+} else {
+reject(result);
+}
+});
+});
+}
+
+shell
+复制代码
+
+### 公交
+function transitRoute(from, to, city) {
+return new Promise((resolve, reject) => {
+STATE.services.transit.setCity(city || DEFAULT_CITY);
+STATE.services.transit.search([from.lng, from.lat], [to.lng, to.lat], (status, result) => {
+if (status === 'complete' && result.plans && result.plans[0]) {
+const plan = result.plans[0];
+const minutes = +(plan.time || 0); // already minutes
+const segPaths = [];
+plan.segments.forEach(seg => {
+if (seg.transit?.path) segPaths.push(seg.transit.path);
+if (seg.walking?.path) segPaths.push(seg.walking.path);
+});
+const poly = new Amap.Polyline({
+path: segPaths.flat(),
+strokeColor: '#1677ff',
+strokeWeight: 5,
+strokeOpacity: 0.9
+});
+poly._durationMin = minutes;
+poly._mode = 'transit';
+poly.on('click', () => toggleRouteDurationLabel(poly, STATE.map));
+resolve(poly);
+} else {
+reject(result);
+}
+});
+});
+}
+
+markdown
+复制代码
+
+> 注意：若你的 transit 路线是分段渲染的（每段一条 polyline），请按段分别计算/赋值 `_durationMin`；如果以方案合并渲染，可直接在合并 polyline 上赋值计划总时长。
+
+## E. 切换 Day/模式时的清理
+在 `drawDay()` 入口调用 `clearOverlays()` 之后开始重绘；确保 `clearOverlays()` 按 B 节约定清掉每条 polyline 的 `_labelOverlay`。
+
+## F. 交互细节
+- 标签默认不显示；只在第一次点击该 polyline 时显示。
+- 再次点击同一 polyline 隐藏它的标签（toggle）。
+- 切换 Day 或模式时，所有标签被清除。
+
+# 验收标准
+- 渲染任意 Day、任意模式，点击蓝色线路，即刻在线路中点位置显示 “图标 + 预计 X.X 分钟” 的 pill。
+- pill 随地图移动缩放；再次点击同一线路隐藏。
+- 切换 Day 或模式后，之前的 pill 不再残留。
+- 控制台无异常报错；多段线路各自可独立显示时间。
+
+# 代码风格
+- 不引入额外第三方库；仅使用 AMap 原生覆盖物（AMap.Text / AMap.Marker）。
+- 不修改项目外部结构（仍为 IIFE，暴露 window.AmapTripRenderer）。
+- 变量命名清晰、注释简洁。

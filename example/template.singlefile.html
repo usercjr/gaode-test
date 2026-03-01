@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>{{TRIP_TITLE}} · 行程地图</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css" />
+  <style>
+    :root {
+      --sidebar-width: 320px;
+      --bg-gradient: linear-gradient(145deg, #eef2ff 0%, #fdf2f8 45%, #f8fafc 100%);
+      --card-bg: rgba(255, 255, 255, 0.9);
+      --card-border: rgba(148, 163, 184, 0.15);
+      --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.08);
+      --primary: #0ea5e9;
+      --primary-dark: #0284c7;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --text-muted: #64748b;
+      --rounded-lg: 18px;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      background: var(--bg-gradient);
+      color: #0f172a;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .page {
+      display: flex;
+      gap: 28px;
+      padding: 28px;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--rounded-lg);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px);
+      padding: 24px 22px;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      gap: 18px;
+    }
+
+    .sidebar-header h3 {
+      margin: 0;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .sidebar-header p {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+
+    .planner {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(14, 165, 233, 0.08);
+      border: 1px solid rgba(14, 165, 233, 0.18);
+      border-radius: 16px;
+      padding: 16px 18px;
+    }
+
+    .planner label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #0369a1;
+    }
+
+    .planner textarea {
+      width: 100%;
+      min-height: 160px;
+      font-size: 13px;
+      line-height: 1.55;
+      border-radius: 14px;
+      border: 1px solid rgba(14, 165, 233, 0.35);
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.75);
+      resize: vertical;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .planner textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+    }
+
+    .primary-btn {
+      width: 100%;
+      border: none;
+      border-radius: 14px;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 12px 24px rgba(14, 165, 233, 0.25);
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .primary-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 28px rgba(14, 165, 233, 0.3);
+    }
+
+    .primary-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 10px 20px rgba(14, 165, 233, 0.2);
+    }
+
+    .planner .status {
+      min-height: 18px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .planner .status.success { color: var(--success); }
+    .planner .status.error { color: var(--danger); }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .panel label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+
+    .mode-btn,
+    .day-item {
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.65);
+      color: #0f172a;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .mode-btn + .mode-btn,
+    .day-item + .day-item {
+      margin-top: 8px;
+    }
+
+    .mode-btn:hover,
+    .day-item:hover {
+      border-color: var(--primary);
+      box-shadow: 0 10px 22px rgba(14, 165, 233, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .mode-btn.active {
+      background: linear-gradient(135deg, #22d3ee 0%, #0ea5e9 100%);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: 0 15px 30px rgba(14, 165, 233, 0.28);
+    }
+
+    .day-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .day-item.active {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 16px 32px rgba(99, 102, 241, 0.25);
+    }
+
+    .day-item .meta {
+      font-size: 12px;
+      color: rgba(248, 250, 252, 0.85);
+    }
+
+    .poi-badge {
+      background: #2563eb;
+      color: #fff;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      box-shadow: 0 6px 14px rgba(37, 99, 235, 0.25);
+    }
+
+    .map-panel {
+      flex: 1;
+      position: relative;
+      border-radius: 26px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: var(--shadow-soft);
+      background: #0f172a;
+      min-height: 540px;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .map-overlay {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      min-width: 220px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #f8fafc;
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 18px 38px rgba(15, 23, 42, 0.42);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .map-overlay h4 {
+      margin: 0;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #bae6fd;
+    }
+
+    .map-overlay p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: rgba(248, 250, 252, 0.95);
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(148, 163, 184, 0.18);
+      margin: 6px 0;
+    }
+
+    @media (max-width: 1200px) {
+      .page {
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .sidebar {
+        width: 100%;
+        max-height: 380px;
+      }
+
+      .map-panel {
+        min-height: 460px;
+      }
+    }
+  </style>
+
+  <!-- {{AMAP_JS_KEY_INJECT}} -->
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <h3 id="trip-title">{{TRIP_TITLE}}</h3>
+        <p>行程可视化指南</p>
+      </header>
+      <section class="planner">
+        <label for="itinerary-input">行程输入（示例：第1天 上海…）</label>
+        <textarea id="itinerary-input" placeholder="在此粘贴行程文本，例如：
+第1天 上海经典地标
+- [上海] 外滩（夜景最佳，建议19:00后）"></textarea>
+        <button id="generate-btn" class="primary-btn">生成 / 更新地图</button>
+        <small id="generate-status" class="status"></small>
+      </section>
+      <div class="panel">
+        <label>出行方式</label>
+        <div id="mode-buttons"></div>
+      </div>
+      <div class="panel">
+        <label>行程 Day</label>
+        <div id="day-list"></div>
+      </div>
+    </aside>
+    <section class="map-panel">
+      <div id="map"></div>
+      <div class="map-overlay">
+        <h4>操作提示</h4>
+        <div class="divider"></div>
+        <p>• 切换上方 Day 浏览多段行程<br />
+           • 点击彩色路线查看预计时长<br />
+           • 点击侧栏按钮可重新生成地图</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ✅ 外部加载 map.js（禁止 inline 逻辑代码） -->
+  <script src="./src/map.js"></script>
+
+  <!-- ✅ 内联仅允许注入渲染数据 -->
+  <script id="trip-data" type="application/json">{{TRIP_DATA_JSON}}</script>
+
+  <!-- {{INIT_AMAP_TRIP_MAP_CALL}} -->
+</body>
+</html>

@@ -1,0 +1,188 @@
+{
+  "title": "My Amap Trip",
+  "days": [
+    {
+      "title": "上海经典地标",
+      "city": "上海",
+      "notes": null,
+      "places": [
+        {
+          "name": "外滩",
+          "address": null,
+          "location": {
+            "lng": 121.497253,
+            "lat": 31.238235,
+            "address": "上海市浦东新区外滩",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "浦东新区",
+            "adcode": "310115"
+          },
+          "type": null,
+          "status": null,
+          "notes": "夜景最佳，建议19:00后",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "南京东路",
+          "address": null,
+          "location": {
+            "lng": 121.477072,
+            "lat": 31.234663,
+            "address": "上海市黄浦区南京东路",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "黄浦区",
+            "adcode": "310101"
+          },
+          "type": null,
+          "status": null,
+          "notes": "购物",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "人民广场",
+          "address": null,
+          "location": {
+            "lng": 121.476216,
+            "lat": 31.230389,
+            "address": "上海市黄浦区人民广场",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "黄浦区",
+            "adcode": "310101"
+          },
+          "type": null,
+          "status": null,
+          "notes": "市中心漫步",
+          "city": "上海",
+          "cityUsedForSearch": null
+        }
+      ]
+    },
+    {
+      "title": "上海城市地标",
+      "city": "上海",
+      "notes": null,
+      "places": [
+        {
+          "name": "豫园",
+          "address": null,
+          "location": {
+            "lng": 121.487633,
+            "lat": 31.225312,
+            "address": "上海市黄浦区豫园街道",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "黄浦区",
+            "adcode": "310101"
+          },
+          "type": null,
+          "status": null,
+          "notes": "古典园林",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "城隍庙",
+          "address": null,
+          "location": {
+            "lng": 121.4926,
+            "lat": 31.2285,
+            "address": "上海市黄浦区城隍庙",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "黄浦区",
+            "adcode": "310101"
+          },
+          "type": null,
+          "status": null,
+          "notes": "老街小吃",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "陆家嘴",
+          "address": null,
+          "location": {
+            "lng": 121.507513,
+            "lat": 31.234295,
+            "address": "上海市浦东新区陆家嘴",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "浦东新区",
+            "adcode": "310115"
+          },
+          "type": null,
+          "status": null,
+          "notes": "摩天大楼",
+          "city": "上海",
+          "cityUsedForSearch": null
+        }
+      ]
+    },
+    {
+      "title": "上海文化与科技",
+      "city": "上海",
+      "notes": null,
+      "places": [
+        {
+          "name": "上海博物馆",
+          "address": null,
+          "location": {
+            "lng": 121.474656,
+            "lat": 31.230416,
+            "address": "上海市黄浦区上海博物馆",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "黄浦区",
+            "adcode": "310101"
+          },
+          "type": null,
+          "status": null,
+          "notes": "文化展览",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "上海科技馆",
+          "address": null,
+          "location": {
+            "lng": 121.544379,
+            "lat": 31.221517,
+            "address": "上海市浦东新区上海科技馆",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "浦东新区",
+            "adcode": "310115"
+          },
+          "type": null,
+          "status": null,
+          "notes": "互动体验",
+          "city": "上海",
+          "cityUsedForSearch": null
+        },
+        {
+          "name": "东方明珠",
+          "address": null,
+          "location": {
+            "lng": 121.499764,
+            "lat": 31.23991,
+            "address": "上海市浦东新区东方明珠",
+            "province": "上海市",
+            "city": "上海市",
+            "district": "浦东新区",
+            "adcode": "310115"
+          },
+          "type": null,
+          "status": null,
+          "notes": "登塔俯瞰上海",
+          "city": "上海",
+          "cityUsedForSearch": null
+        }
+      ]
+    }
+  ]
+}

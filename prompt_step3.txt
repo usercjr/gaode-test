@@ -1,0 +1,475 @@
+① 新增：src/constants.js
+// src/constants.js
+// ⚠️ 必填：两个 Key
+// 1) 浏览器地图展示用：高德 Web JS Key（供 <script src="webapi.amap.com/..."> 使用）
+//    ❗这个 KEY 直接在 public/map.html 里替换 AMAP_JS_KEY_HERE
+// 2) Web 服务调用用：高德 Web 服务 Key（本文件里填写；仅本地演示用，正式环境请用服务端代理）
+//    👉 https://lbs.amap.com/dev/key/app
+
+export const DEFAULT_CITY = "北京"; // 你选择“固定单城”，可改成“上海/哈尔滨”等
+export const AMAP_WEB_SERVICE_KEY = "<YOUR_AMAP_WEB_SERVICE_KEY>"; // ← 必填：Web服务Key
+
+// 公交策略（与高德文档一致）
+export const TRANSIT_STRATEGIES = [
+  { code: 0, label: "最快" },
+  { code: 2, label: "少换乘" },
+  { code: 3, label: "少步行" },
+  { code: 5, label: "不乘地铁" },
+  { code: 1, label: "最经济" },
+];
+
+// 线路颜色（按策略分配）
+export const STRATEGY_COLORS = {
+  0: "#2563eb", // 最快
+  2: "#16a34a", // 少换乘
+  3: "#ea580c", // 少步行
+  5: "#a21caf", // 不乘地铁
+  1: "#0d9488", // 最经济
+};
+
+② 新增：src/fetchTransit.js
+// src/fetchTransit.js
+// 多策略公交路线查询（高德 Web 服务 API）
+// 文档：/v3/direction/transit/integrated
+
+import { AMAP_WEB_SERVICE_KEY } from "./constants.js";
+
+/** 将 "lng,lat;lng,lat;..." 解析为 [[lng,lat], ...] */
+function parsePolyline(str) {
+  if (!str) return [];
+  return str.split(";").map(s => {
+    const [lng, lat] = s.split(",").map(Number);
+    return [lng, lat];
+  }).filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat));
+}
+
+/** 取一条换乘方案中的整段“可绘制路径”（步行 polyline + 公交 polyline） */
+function flattenTransitPath(transit) {
+  const segments = transit?.segments || [];
+  const path = [];
+  for (const seg of segments) {
+    // 步行段
+    if (seg.walking?.steps) {
+      for (const st of seg.walking.steps) path.push(...parsePolyline(st.polyline));
+    }
+    // 公交/地铁段（可能多条 buslines）
+    if (seg.bus?.buslines) {
+      for (const line of seg.bus.buslines) path.push(...parsePolyline(line.polyline));
+    }
+    // 地铁入口/出口的点无需额外处理（已含于 polyline）
+  }
+  return path;
+}
+
+/**
+ * 查询两点之间的公交换乘方案（返回前三方案或对应策略方案）
+ * @param {[number,number]} origin [lng,lat]
+ * @param {[number,number]} dest [lng,lat]
+ * @param {Object} opts { city, strategy }
+ * @returns {Promise<Array<{strategy:number, label:string, path:number[][], raw:any}>>}
+ */
+export async function fetchTransitRoutes(origin, dest, { city, strategy }) {
+  const key = AMAP_WEB_SERVICE_KEY;
+  if (!key || key.includes("YOUR_AMAP_WEB_SERVICE_KEY")) {
+    throw new Error("请在 src/constants.js 中填写 AMAP_WEB_SERVICE_KEY");
+  }
+  const originStr = `${origin[0]},${origin[1]}`;
+  const destStr   = `${dest[0]},${dest[1]}`;
+
+  const url = new URL("https://restapi.amap.com/v3/direction/transit/integrated");
+  url.searchParams.set("origin", originStr);
+  url.searchParams.set("destination", destStr);
+  url.searchParams.set("city", city);
+  url.searchParams.set("key", key);
+  url.searchParams.set("output", "JSON");
+  url.searchParams.set("strategy", String(strategy)); // 0/1/2/3/5
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+
+  if (data.status !== "1" || !data.route?.transits?.length) {
+    // 可能无公交方案（城市/时间/点位限制），返回空
+    return [];
+  }
+
+  // 只取若干条高德返回的 transits（通常已按该 strategy 排序）
+  // 这里取前 1 条就够（你选择“每个策略切一条方案显示”）
+  const t0 = data.route.transits[0];
+  const path = flattenTransitPath(t0);
+
+  return [{
+    strategy,
+    label: "",   // 标签在渲染层根据策略码映射
+    path,
+    raw: t0
+  }];
+}
+
+③ 新增：src/renderRoutes.js
+// src/renderRoutes.js
+// 根据 Day 的相邻点，按当前策略为每一段生成公交路线，并在地图上绘制
+
+import { fetchTransitRoutes } from "./fetchTransit.js";
+import { STRATEGY_COLORS } from "./constants.js";
+
+export class TransitRenderer {
+  /**
+   * @param {AMap.Map} map
+   * @param {Object} opts { city, strategy }
+   */
+  constructor(map, opts) {
+    this.map = map;
+    this.city = opts.city;
+    this.strategy = opts.strategy; // 0/1/2/3/5
+    this.polylines = [];           // 当前已绘制的线路
+  }
+
+  setStrategy(strategy) {
+    this.strategy = strategy;
+  }
+
+  clear() {
+    this.polylines.forEach(pl => pl.setMap(null));
+    this.polylines = [];
+  }
+
+  /** 将相邻点对转换为 [ [lng,lat], [lng,lat] ] */
+  static buildAdjacentPairs(places) {
+    const norm = p => {
+      if (!p?.location) return null;
+      if (typeof p.location === "string") {
+        const [lng, lat] = p.location.split(",").map(Number);
+        return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
+      }
+      if (p.location.lng != null && p.location.lat != null) {
+        const lng = Number(p.location.lng), lat = Number(p.location.lat);
+        return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
+      }
+      return null;
+    };
+    const pts = places.map(norm).filter(Boolean);
+    const pairs = [];
+    for (let i = 0; i < pts.length - 1; i++) pairs.push([pts[i], pts[i + 1]]);
+    return pairs;
+  }
+
+  /** 按当前策略为某一天的相邻点绘制公交路线 */
+  async renderDay(places) {
+    this.clear();
+    const pairs = TransitRenderer.buildAdjacentPairs(places);
+    if (!pairs.length) return;
+
+    for (const [o, d] of pairs) {
+      const routes = await fetchTransitRoutes(o, d, { city: this.city, strategy: this.strategy });
+      if (!routes.length) continue;
+      const r = routes[0]; // 该策略下的最优方案
+      const polyline = new AMap.Polyline({
+        path: r.path,
+        strokeColor: STRATEGY_COLORS[this.strategy] || "#2563eb",
+        strokeWeight: 5,
+        strokeOpacity: 0.95,
+      });
+      polyline.setMap(this.map);
+      this.polylines.push(polyline);
+    }
+  }
+}
+
+④ 新增：src/renderMap.js
+// src/renderMap.js
+// 负责：读取行程数据、初始化地图与 UI、切换 Day、切换公交策略并调用 TransitRenderer
+
+import { DEFAULT_CITY, TRANSIT_STRATEGIES } from "./constants.js";
+import { TransitRenderer } from "./renderRoutes.js";
+
+function readTrip() {
+  const el = document.getElementById("trip-data");
+  if (!el) return null;
+  try { return JSON.parse(el.textContent); } catch { return null; }
+}
+
+function normLoc(loc) {
+  if (!loc) return null;
+  if (typeof loc === "string") {
+    const [lng, lat] = loc.split(",").map(Number);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) return [lng, lat];
+    return null;
+  }
+  if (typeof loc === "object" && loc.lng != null && loc.lat != null) {
+    const lng = Number(loc.lng), lat = Number(loc.lat);
+    return (Number.isFinite(lng) && Number.isFinite(lat)) ? [lng, lat] : null;
+  }
+  return null;
+}
+
+function buildDays(data) {
+  const days = [];
+  if (Array.isArray(data.days)) {
+    data.days.forEach((d, i) => {
+      const title = d.title || d.theme || ("Day " + (d.day || (i + 1)));
+      days.push({
+        id: i,
+        title,
+        places: Array.isArray(d.places) ? d.places : []
+      });
+    });
+  } else {
+    // 兼容纯数组
+    days.push({ id: 0, title: "Day 1", places: data.places || [] });
+  }
+  return days;
+}
+
+function initMap(center) {
+  return new AMap.Map("map", {
+    zoom: 12,
+    center: center || [116.39739, 39.90886], // fallback: 北京天安门
+    viewMode: "2D"
+  });
+}
+
+function fitMapTo(map, lnglats) {
+  if (!lnglats.length) return;
+  const bounds = new AMap.Bounds(
+    [Math.min(...lnglats.map(p => p[0])), Math.min(...lnglats.map(p => p[1]))],
+    [Math.max(...lnglats.map(p => p[0])), Math.max(...lnglats.map(p => p[1]))]
+  );
+  map.setBounds(bounds, false, [40, 40, 40, 40]);
+}
+
+function createStrategyButtons(container, onPick) {
+  const frag = document.createDocumentFragment();
+  TRANSIT_STRATEGIES.forEach((s, idx) => {
+    const btn = document.createElement("button");
+    btn.className =
+      "px-3 py-1.5 text-sm rounded-md border bg-white hover:bg-gray-50 transition " +
+      (idx === 0 ? "ring-2 ring-blue-200 border-blue-500" : "border-gray-200");
+    btn.textContent = s.label;
+    btn.onclick = () => onPick(s.code, btn);
+    frag.appendChild(btn);
+  });
+  container.innerHTML = "";
+  container.appendChild(frag);
+}
+
+function createDayButtons(container, dayList, onPick) {
+  const frag = document.createDocumentFragment();
+  dayList.forEach((d, idx) => {
+    const btn = document.createElement("button");
+    btn.className =
+      "w-full text-left px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 transition mb-2 " +
+      (idx === 0 ? "ring-2 ring-blue-200 border-blue-500" : "border-gray-200");
+    btn.innerHTML = `<div class="font-semibold">${d.title}</div><div class="text-xs text-gray-500">${d.places.length} 个点</div>`;
+    btn.onclick = () => onPick(idx, btn);
+    frag.appendChild(btn);
+  });
+  container.innerHTML = "";
+  container.appendChild(frag);
+}
+
+(function main() {
+  const data = readTrip();
+  if (!data) { alert("未读取到行程数据"); return; }
+
+  const days = buildDays(data);
+
+  // 首个有效点作为中心
+  let first = null;
+  for (const d of days) {
+    for (const p of d.places) {
+      const ll = normLoc(p.location);
+      if (ll) { first = ll; break; }
+    }
+    if (first) break;
+  }
+
+  const map = initMap(first);
+
+  // 左侧 Day 列表
+  const dayListEl = document.getElementById("days");
+  // 右上策略按钮
+  const strategyEl = document.getElementById("strategyBtns");
+
+  let currentDayIdx = 0;
+  let currentStrategy = TRANSIT_STRATEGIES[0].code;
+
+  // 地点标记（按 Day 切换）
+  let liveMarkers = [];
+  function clearMarkers() {
+    liveMarkers.forEach(m => m.setMap(null));
+    liveMarkers = [];
+  }
+  function renderMarkers(day) {
+    clearMarkers();
+    const pts = [];
+    const info = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -22) });
+    day.places.forEach((p, i) => {
+      const ll = normLoc(p.location);
+      if (!ll) return;
+      pts.push(ll);
+      const marker = new AMap.Marker({
+        position: ll,
+        label: { content: String(i + 1), direction: "top" }
+      });
+      marker.on("click", () => {
+        const html = `
+          <div style="min-width:220px">
+            <div style="font-weight:600;margin-bottom:4px;">${p.name || "未命名"}</div>
+            <div style="color:#6b7280;font-size:12px;margin-bottom:6px;">${p.address || ""}</div>
+            <div style="font-size:12px;line-height:1.4;">
+              ${p.notes ? ("📝 " + p.notes) : ""}
+              ${p.type ? ("<br/>🏷️ " + p.type) : ""}
+              ${p.status ? ("<br/>📌 " + p.status) : ""}
+            </div>
+          </div>
+        `;
+        info.setContent(html);
+        info.open(map, marker.getPosition());
+      });
+      liveMarkers.push(marker);
+    });
+    liveMarkers.forEach(m => m.setMap(map));
+    if (pts.length) fitMapTo(map, pts);
+  }
+
+  // 公交路线渲染器
+  const transit = new TransitRenderer(map, { city: DEFAULT_CITY, strategy: currentStrategy });
+
+  async function renderDayAndRoutes(idx) {
+    currentDayIdx = idx;
+    const day = days[idx];
+    renderMarkers(day);
+    await transit.renderDay(day.places);
+  }
+
+  // 装载 UI
+  createDayButtons(dayListEl, days, (idx, btn) => {
+    // 按钮激活样式切换
+    [...dayListEl.children].forEach(b => b.classList.remove("ring-2", "ring-blue-200", "border-blue-500"));
+    btn.classList.add("ring-2", "ring-blue-200", "border-blue-500");
+    renderDayAndRoutes(idx);
+  });
+
+  createStrategyButtons(strategyEl, async (code, btn) => {
+    currentStrategy = code;
+    transit.setStrategy(code);
+    // 切换按钮样式
+    [...strategyEl.children].forEach(b => b.classList.remove("ring-2", "ring-blue-200", "border-blue-500"));
+    btn.classList.add("ring-2", "ring-blue-200", "border-blue-500");
+    // 重新渲染当前 Day 的公交路线
+    await transit.renderDay(days[currentDayIdx].places);
+  });
+
+  // 默认渲染第一个 Day
+  renderDayAndRoutes(0);
+})();
+
+⑤ 新增：public/map.html
+<!-- public/map.html -->
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>行程地图 · Amap（公交换乘多策略）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind CDN（轻量 UI） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style> body{background:#f7f8fa;color:#111827} </style>
+
+  <!-- ⚠️ 这里替换为你的 高德 Web JS Key -->
+  <script src="https://webapi.amap.com/maps?v=2.0&key=AMAP_JS_KEY_HERE"></script>
+
+  <!-- 行程数据会由生成器注入到这里（一个 <script id="trip-data">） -->
+  /*__DATA_PLACEHOLDER__*/
+</head>
+<body>
+  <div class="grid grid-cols-[320px_1fr] h-screen">
+    <aside class="bg-white border-r p-4 overflow-y-auto">
+      <h1 class="text-lg font-semibold mb-2">行程地图</h1>
+      <p class="text-xs text-gray-500 mb-3">点击左侧 Day，右上角筛选公交策略</p>
+      <div id="days" class="space-y-2"></div>
+      <p class="text-xs text-gray-400 mt-4">提示：高德公交换乘需要指定城市；你已选择“固定单城模式”。</p>
+    </aside>
+    <main class="relative">
+      <div id="map" class="w-full h-full"></div>
+
+      <!-- 右上角策略按钮 -->
+      <div class="absolute top-3 right-3 bg-white border rounded-xl shadow p-2 flex gap-2" id="strategyBtns">
+        <!-- JS 动态填充按钮 -->
+      </div>
+    </main>
+  </div>
+
+  <!-- 业务脚本（ESM） -->
+  <script type="module" src="../src/renderMap.js"></script>
+</body>
+</html>
+
+⑥ 更新生成器：scripts/generateAmapHtml.js
+
+（让它把 example/output-amap.json 注入到 public/map.html 占位符，输出 output-map.html）
+
+// scripts/generateAmapHtml.js
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function arg(flag, def = null) {
+  const i = process.argv.indexOf(flag);
+  return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : def;
+}
+
+const inPath  = arg("--in", "example/output-amap.json");
+const outPath = arg("--out", "output-map.html");
+const templatePath = path.join(__dirname, "..", "public", "map.html");
+
+if (!fs.existsSync(inPath))   throw new Error(`Input JSON not found: ${inPath}`);
+if (!fs.existsSync(templatePath)) throw new Error(`Template not found: ${templatePath}`);
+
+const raw = fs.readFileSync(inPath, "utf-8");
+let json;
+try { json = JSON.parse(raw); } catch (e) { throw new Error("Invalid JSON: " + e.message); }
+
+const dataScript = `<script id="trip-data" type="application/json">${JSON.stringify(json)}</script>`;
+const template = fs.readFileSync(templatePath, "utf-8");
+const html = template.replace("/*__DATA_PLACEHOLDER__*/", dataScript);
+
+fs.writeFileSync(outPath, html, "utf-8");
+console.log(`✅ Wrote ${outPath}`);
+console.log("ℹ️ 打开该文件前，请先用你的 Web JS Key 替换其中的 AMAP_JS_KEY_HERE。");
+
+▶️ 使用方法（一次配置，长期复用）
+
+填 Key
+
+打开 public/map.html，把
+AMAP_JS_KEY_HERE → 替换为你的 高德 Web JS Key（浏览器加载地图用）
+
+打开 src/constants.js，把
+AMAP_WEB_SERVICE_KEY → 替换为你的 高德 Web 服务 Key（调用公交 API 用）
+
+准备行程 JSON
+
+确保 example/output-amap.json 存在（你已有）
+
+或用你的 CLI 继续生成它
+
+生成页面
+
+node scripts/generateAmapHtml.js
+
+
+会生成：output-map.html
+
+查看
+
+直接双击 output-map.html 打开（建议 Chrome）
+
+左侧切 Day，右上角切策略（最快/少换乘/少步行/不乘地铁/最经济）
+
+页面将自动为相邻点计算公交路线并绘制
+
+注：高德 REST API 支持跨域，浏览器直调可用；但生产环境建议后端代理，避免暴露 Web 服务 Key。

@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>WanderAI 智能旅行助手</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(145deg, #eef2ff 0%, #fdf2f8 45%, #f8fafc 100%);
+      --card-bg: rgba(255, 255, 255, 0.92);
+      --card-border: rgba(148, 163, 184, 0.18);
+      --shadow-soft: 0 22px 48px rgba(15, 23, 42, 0.12);
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --accent: #f97316;
+      --muted: #64748b;
+      --success: #16a34a;
+      --danger: #ef4444;
+      --radius-lg: 22px;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg-gradient);
+      color: #0f172a;
+      padding: 32px clamp(16px, 4vw, 48px);
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    a { color: inherit; }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .branding {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .branding .logo {
+      width: 58px;
+      height: 58px;
+      border-radius: 22px;
+      background: rgba(37, 99, 235, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+    }
+
+    .branding h1 {
+      margin: 0;
+      font-size: clamp(22px, 4vw, 28px);
+      font-weight: 700;
+    }
+
+    .branding p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .view-map-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #fff;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      box-shadow: 0 15px 28px rgba(37, 99, 235, 0.28);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }
+
+    .view-map-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .view-map-btn:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 34px rgba(37, 99, 235, 0.32);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(380px, 1fr);
+      gap: 28px;
+      flex: 1;
+    }
+
+    .planner-card,
+    .chat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      backdrop-filter: blur(14px);
+    }
+
+    .planner-card h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .input-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .input-field label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+
+    .input-field input {
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(255, 255, 255, 0.85);
+      padding: 12px 14px;
+      font-size: 14px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .input-field input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    }
+
+    .preference-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(37, 99, 235, 0.07);
+      border: 1px solid rgba(37, 99, 235, 0.18);
+    }
+
+    .pref-trigger {
+      border: none;
+      background: rgba(37, 99, 235, 0.12);
+      color: var(--primary-dark);
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .pref-summary {
+      font-size: 13px;
+      color: var(--muted);
+      flex: 1;
+      text-align: right;
+    }
+
+    .action-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .btn-secondary,
+    .btn-primary,
+    .btn-ghost,
+    .btn-link {
+      border-radius: 12px;
+      padding: 11px 18px;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }
+
+    .btn-secondary {
+      background: rgba(37, 99, 235, 0.08);
+      color: var(--primary-dark);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent) 0%, #f97316 40%, #fb923c 100%);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 15px 28px rgba(249, 115, 22, 0.28);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      color: #1e293b;
+    }
+
+    .btn-link {
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 10px;
+    }
+
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 18px 34px rgba(249, 115, 22, 0.32); }
+    .btn-secondary:hover, .btn-ghost:hover { transform: translateY(-1px); }
+    .btn-link:hover { color: var(--primary); }
+
+    .muted { color: var(--muted); font-size: 12px; }
+    .llm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .llm-grid .full { grid-column: 1 / -1; }
+
+    .chat-card {
+      position: relative;
+    }
+
+    .chat-log {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-right: 4px;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 92%;
+    }
+
+    .message .meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .bubble {
+      padding: 14px 16px;
+      border-radius: 18px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .message.user .bubble {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #fff;
+      border-bottom-right-radius: 6px;
+    }
+
+    .message.ai .bubble {
+      background: rgba(37, 99, 235, 0.08);
+      border: 1px solid rgba(37, 99, 235, 0.15);
+      border-bottom-left-radius: 6px;
+    }
+
+    .message.system .bubble {
+      background: rgba(148, 163, 184, 0.15);
+      color: #1f2937;
+      border-radius: 14px;
+    }
+
+    .chat-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 6px;
+    }
+
+    .chat-composer {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      margin-top: 10px;
+    }
+
+    .chat-composer textarea {
+      flex: 1;
+      min-height: 42px;
+      max-height: 140px;
+      resize: vertical;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(255, 255, 255, 0.92);
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .chat-composer textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    }
+
+    .pref-dialog {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.3);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+      z-index: 40;
+    }
+
+    .pref-dialog.active { display: flex; }
+
+    .pref-content {
+      width: min(640px, 92vw);
+      background: var(--card-bg);
+      border-radius: 20px;
+      border: 1px solid var(--card-border);
+      box-shadow: var(--shadow-soft);
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .pref-content h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .pref-section {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .pref-section h4 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+
+    .pref-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pref-tag {
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      cursor: pointer;
+      font-size: 14px;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+
+    .pref-tag.active {
+      background: rgba(37, 99, 235, 0.18);
+      border-color: rgba(37, 99, 235, 0.45);
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding-top: 10px;
+    }
+
+    .toast {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      padding: 12px 18px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 14px;
+      box-shadow: 0 18px 30px rgba(15, 23, 42, 0.25);
+      opacity: 0;
+      transform: translateY(-12px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 50;
+    }
+
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    .toast.success { background: linear-gradient(135deg, var(--success) 0%, #22c55e 100%); }
+    .toast.error { background: linear-gradient(135deg, var(--danger) 0%, #ef4444 100%); }
+
+    @media (max-width: 1080px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+      .view-map-btn { align-self: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="branding">
+      <div class="logo">🌍</div>
+      <div>
+        <h1>行界 WanderAI · 智能旅行助手</h1>
+        <p>与 AI 对话获取专属行程，随时切换到地图视图</p>
+      </div>
+    </div>
+    <button class="view-map-btn" id="viewMapBtn">查看地图</button>
+  </header>
+
+  <main>
+    <section class="planner-card">
+      <h2>旅程信息</h2>
+      <div class="form-grid">
+        <div class="input-field">
+          <label for="field-origin">出发地</label>
+          <input id="field-origin" type="text" placeholder="如 Shanghai" autocomplete="off" />
+        </div>
+        <div class="input-field">
+          <label for="field-destination">目的地</label>
+          <input id="field-destination" type="text" placeholder="如 成都" autocomplete="off" />
+        </div>
+        <div class="input-field">
+          <label for="field-date">日期 / 时间</label>
+          <input id="field-date" type="date" />
+        </div>
+      </div>
+
+      <div class="preference-row">
+        <button class="pref-trigger" id="prefTrigger">选择偏好</button>
+        <div class="pref-summary" id="prefSummary">尚未选择</div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn-secondary" id="manualBtn">手动创建线路</button>
+        <button class="btn-primary" id="aiPlanBtn">⚡ AI规划行程</button>
+      </div>
+    </section>
+
+    <section class="chat-card">
+      <div class="chat-log" id="chatLog"></div>
+      <div class="chat-toolbar">
+        <button class="btn-link" id="clearChatBtn">清空会话</button>
+        <div class="chat-actions">
+          <button class="btn-ghost" id="secondaryMapBtn">查看地图</button>
+        </div>
+      </div>
+      <div class="chat-composer">
+        <textarea id="chatInput" placeholder="继续对话，例如：预算 2000 元内，增加夜景和美食，减少步行距离"></textarea>
+        <button class="btn-primary" id="chatSendBtn">发送</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="pref-dialog" id="prefDialog">
+    <div class="pref-content">
+      <h3>旅行偏好</h3>
+      <div id="prefContainer"></div>
+      <div class="dialog-actions">
+        <button class="btn-ghost" id="prefCancel">取消</button>
+        <button class="btn-primary" id="prefConfirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const preferenceGroups = [
+      {
+        title: '同行伙伴',
+        key: 'companions',
+        options: [
+          { id: 'solo', label: '独自出行', icon: '🧳' },
+          { id: 'family', label: '家庭出行', icon: '👨‍👩‍👧‍👦' },
+          { id: 'couple', label: '情侣出行', icon: '💑' },
+          { id: 'friends', label: '朋友出行', icon: '🧑‍🤝‍🧑' },
+          { id: 'seniors', label: '老人同行', icon: '🧓' }
+        ]
+      },
+      {
+        title: '风格偏好',
+        key: 'styles',
+        options: [
+          { id: 'culture', label: '文化体验', icon: '🎭' },
+          { id: 'mustsee', label: '经典必去', icon: '📸' },
+          { id: 'nature', label: '自然风光', icon: '🌿' },
+          { id: 'city', label: '城市景观', icon: '🏙️' },
+          { id: 'history', label: '历史古迹', icon: '🏛️' }
+        ]
+      },
+      {
+        title: '行程节奏',
+        key: 'pace',
+        options: [
+          { id: 'tight', label: '紧凑', icon: '⚡' },
+          { id: 'easy', label: '宽松', icon: '🌴' }
+        ]
+      },
+      {
+        title: '模型风格标签（8类）',
+        key: 'model_labels',
+        options: [
+          { id: 'ml_Rush_Trip', label: '特种兵快游', icon: '🎯', modelLabel: 'Rush_Trip' },
+          { id: 'ml_Deep_Cultural_Trip', label: '深度文化', icon: '📚', modelLabel: 'Deep_Cultural_Trip' },
+          { id: 'ml_Food_Adventure', label: '美食探店', icon: '🍜', modelLabel: 'Food_Adventure' },
+          { id: 'ml_Nature_Relaxation', label: '自然疗愈', icon: '🌿', modelLabel: 'Nature_Relaxation' },
+          { id: 'ml_City_Leisure_Tour', label: 'Citywalk', icon: '🏙️', modelLabel: 'City_Leisure_Tour' },
+          { id: 'ml_Customized_AI_Tour', label: '智能综合', icon: '🤖', modelLabel: 'Customized_AI_Tour' },
+          { id: 'ml_Vlog_Creator_Trip', label: 'Vlog 创作', icon: '🎥', modelLabel: 'Vlog_Creator_Trip' },
+          { id: 'ml_Photo_Experience', label: '拍照出片', icon: '📸', modelLabel: 'Photo_Experience' }
+        ]
+      }
+    ];
+
+    // 结合你的微调 Prompt 风格标签（来自 CLI 版本的设计）
+    const LABEL_PROMPTS = {
+      Rush_Trip: '🎯【特种兵式高效快游风格】用户希望在最短时间打卡最多景点，追求效率、压缩休息时间。规划规则：一天安排更多景点；强调时间-地点-理由-通勤方式/时长；合理排序避免折返；提供下雨/排队替代方案；效率优先。',
+      Deep_Cultural_Trip: '📚【深度文化体验风格】偏好历史人文/非遗/博物馆/古镇，注重理解城市文化。规划规则：附加文化背景或故事；提供讲解方式；合理安排参观顺序；标注预约/闭馆日/最佳参观时间。',
+      Food_Adventure: '🍜【美食探店风格】以「吃」为核心，餐厅是重点。规划规则：每天2~4家餐厅；列出招牌菜、排队时段、是否预约、价格区间；景点作为餐厅之间过渡；可标注夜市/早餐/深夜食堂。',
+      Nature_Relaxation: '🌿【自然放松疗愈风格】偏好自然风景、公园、山/湖/森林，追求松弛与治愈。规划规则：一天1~3个地点、节奏慢；安排轻徒步/观景台/野餐/休息；减少长途奔波；推荐最佳观景时间。',
+      City_Leisure_Tour: '🏙【城市休闲 Citywalk 风格】偏好逛街、街区氛围、咖啡馆、小店、夜景、拍照。规划规则：串联商圈/街区/地标；强调步行可达与氛围；推荐咖啡店与小众艺术空间；可加入夜生活。',
+      Customized_AI_Tour: '🤖【智能综合行程规划风格】未明确偏好或希望智能最优。规划规则：综合考虑景点分布/住宿/交通/开放时间；每段附通勤建议和预估时长；给出费用估算与替代选项；结构清晰。',
+      Vlog_Creator_Trip: '🎥【Vlog 创作者风格】强调画面感与故事性但不过度专业。规划规则：语言口语化；提示好拍点与出片角度；安排有节奏的场景切换；给出少量拍摄建议（光线/人流）。',
+      Photo_Experience: '📸【拍照打卡/出片风格】追求“照片成果感”。规划规则：列出机位/角度/构图；标注时间光线；提供避人技巧与姿势；可安排换装/道具租赁信息。'
+    };
+
+    function buildSystemPromptByLabel(label) {
+      const head = LABEL_PROMPTS[label] || LABEL_PROMPTS.Customized_AI_Tour;
+      return head + ' 请在不改变输出格式的前提下，尽量体现上述风格偏好。';
+    }
+
+    const selectedPreferences = new Set();
+    const chatLogEl = document.getElementById('chatLog');
+    const toastEl = document.getElementById('toast');
+    const viewMapButtons = [
+      document.getElementById('viewMapBtn'),
+      document.getElementById('secondaryMapBtn')
+    ];
+
+    const state = {
+      itineraryText: '',
+      itineraryJson: null,
+      chatHistory: [],
+      tripContext: null,
+      systemExtra: ''
+    };
+    const MAX_CHAT_MESSAGES = 30;
+
+    // 统一的 API 基址，确保从任何入口打开页面都能命中同源代理
+    const API_BASE = window.location.origin;
+    const DEBUG = true;
+
+    function renderPreferenceOptions() {
+      const container = document.getElementById('prefContainer');
+      container.innerHTML = '';
+      preferenceGroups.forEach(group => {
+        const section = document.createElement('div');
+        section.className = 'pref-section';
+
+        const title = document.createElement('h4');
+        title.textContent = group.title;
+        section.appendChild(title);
+
+        const optionWrap = document.createElement('div');
+        optionWrap.className = 'pref-options';
+
+        group.options.forEach(opt => {
+          const tag = document.createElement('button');
+          tag.type = 'button';
+          tag.className = 'pref-tag' + (selectedPreferences.has(opt.id) ? ' active' : '');
+          tag.dataset.value = opt.id;
+          tag.innerHTML = `${opt.icon} <span>${opt.label}</span>`;
+          tag.addEventListener('click', () => {
+            if (selectedPreferences.has(opt.id)) {
+              selectedPreferences.delete(opt.id);
+              tag.classList.remove('active');
+            } else {
+              selectedPreferences.add(opt.id);
+              tag.classList.add('active');
+            }
+          });
+          optionWrap.appendChild(tag);
+        });
+
+        section.appendChild(optionWrap);
+        container.appendChild(section);
+      });
+    }
+
+    function updatePreferenceSummary() {
+      const summary = document.getElementById('prefSummary');
+      if (!selectedPreferences.size) {
+        summary.textContent = '尚未选择';
+        return;
+      }
+      const labels = [];
+      preferenceGroups.forEach(group => {
+        group.options.forEach(opt => {
+          if (selectedPreferences.has(opt.id)) {
+            labels.push(`${opt.icon} ${opt.label}`);
+          }
+        });
+      });
+      summary.textContent = labels.join('， ');
+    }
+
+    function appendMessage(role, content) {
+      const wrapper = document.createElement('div');
+      wrapper.className = `message ${role}`;
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = role === 'user' ? '我' : role === 'ai' ? 'WanderAI' : '系统';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+      chatLogEl.appendChild(wrapper);
+      chatLogEl.scrollTo({ top: chatLogEl.scrollHeight, behavior: 'smooth' });
+    }
+
+    function getSelectedPreferenceItems() {
+      return Array.from(selectedPreferences).map(id => {
+        for (const group of preferenceGroups) {
+          const found = group.options.find(opt => opt.id === id);
+          if (found) {
+            return {
+              display: `${found.icon} ${found.label}`,
+              label: found.label,
+              modelLabel: found.modelLabel || ''
+            };
+          }
+        }
+        return { display: id, label: id, modelLabel: '' };
+      });
+    }
+
+    function buildItineraryInstruction({ origin, destination, date, preferences, systemExtra }) {
+      let sys = `你是旅行行程规划助手。严格按如下中文格式输出行程文本，不要额外解释或添加 markdown 代码块：\n\n第1天 标题\n- [城市] 景点（备注）\n- [城市] 景点（备注）\n\n第2天 标题\n- [城市] 景点（备注）\n...\n\n要求：\n- 标题以“第N天 …”开头；\n- 每个景点一行，以“- ”开头；\n- 城市写在中括号内，如[上海]；备注写在中文括号内；\n- 不要输出除行程文本以外的任何内容。`;
+      if (systemExtra && typeof systemExtra === 'string') {
+        sys += `\n\n补充限制：${systemExtra}`;
+      }
+      const tripContext = `出发地：${origin || '未填写'}；目的地：${destination || '未填写'}；日期：${date || '未填写'}；偏好：${(preferences || []).join('、') || '未选择'}。`;
+      return `${sys}\n\n【固定背景】\n${tripContext}\n\n【多轮对话要求】\n你将基于后续对话历史持续优化同一份行程。`;
+    }
+
+    function trimChatHistory() {
+      if (state.chatHistory.length > MAX_CHAT_MESSAGES) {
+        state.chatHistory = state.chatHistory.slice(-MAX_CHAT_MESSAGES);
+      }
+    }
+
+    function showToast(message, type = 'success') {
+      toastEl.textContent = message;
+      toastEl.className = `toast ${type}`;
+      toastEl.classList.add('show');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+    }
+
+    function setMapButtonsEnabled(enabled) {
+      viewMapButtons.forEach(btn => {
+        if (!btn) return;
+        btn.disabled = !enabled;
+        btn.style.opacity = enabled ? '1' : '0.6';
+      });
+    }
+
+    // ========== LLM 设置（隐藏在代码中）与调用 ==========
+    // 注意：把密钥写在前端会暴露给任何能打开页面的人，仅适合本地临时联调。
+    // 正式环境请改为“后端代理调用模型接口”。
+    const LLM_CONFIG = {
+      enabled: true,
+      // 改为本地代理，前端不再携带密钥
+      endpoint: '/api/itinerary',
+      model: 'ernie-3.5-8k',
+      key: ''
+    };
+
+    function getLLMSettings() {
+      const { enabled, endpoint, model, key } = LLM_CONFIG || {};
+      return { ep: enabled ? endpoint : '', model: enabled ? model : '', key: enabled ? key : '' };
+    }
+
+    // 本地分类器（可选）
+    async function callLocalClassifier(text) {
+      if (DEBUG) console.log('[classify] POST', `${API_BASE}/api/classify`, { text });
+      // 添加 5 秒超时，避免分类服务异常时阻塞后续 LLM 调用
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const resp = await fetch(`${API_BASE}/api/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: controller.signal
+      }).finally(() => clearTimeout(timeoutId));
+      if (DEBUG) console.log('[classify] status', resp.status);
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => '');
+        if (DEBUG) console.error('[classify] error payload', t);
+        throw new Error('classify 接口错误：' + resp.status + ' ' + t);
+      }
+      const data = await resp.json(); // { label, score }
+      if (DEBUG) console.log('[classify] result', data);
+      return data;
+    }
+
+    async function callLLMItinerary({ origin, destination, date, preferences, systemExtra, chatHistory }) {
+      const { ep, model, key } = getLLMSettings();
+      if (!ep || !model) {
+        // 走代理时无需 key；仅校验 endpoint 和 model
+        if (!ep) throw new Error('缺少代理地址');
+        if (!model) throw new Error('缺少模型名');
+      }
+
+      const instruction = buildItineraryInstruction({ origin, destination, date, preferences, systemExtra });
+      const providerMessages = [{ role: 'user', content: instruction }];
+      (chatHistory || []).forEach(msg => {
+        if (!msg || !msg.content) return;
+        if (msg.role === 'user') providerMessages.push({ role: 'user', content: msg.content });
+        if (msg.role === 'ai') providerMessages.push({ role: 'assistant', content: msg.content });
+      });
+      const body = { model, messages: providerMessages, temperature: 0.7 };
+
+      const headers = { 'Content-Type': 'application/json' };
+      // 直接连厂商时需要 Authorization；走本地代理则不需要
+      if (key) headers['Authorization'] = 'Bearer ' + key;
+      const epAbs = ep.startsWith('http') ? ep : `${API_BASE}${ep}`;
+      if (DEBUG) console.log('[llm] POST', epAbs, body);
+      const resp = await fetch(epAbs, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => '');
+        console.error('LLM 请求失败：', { url: epAbs, status: resp.status, body, response: t });
+        throw new Error('LLM 接口错误：' + resp.status + ' ' + t);
+      }
+      const data = await resp.json();
+      if (DEBUG) console.log('[llm] ok', data);
+
+      // 供应商可能返回 { errorCode, errorMsg, result: {...} }
+      if (typeof data?.errorCode === 'number' && data.errorCode !== 0) {
+        throw new Error(`LLM 返回错误：${data.errorCode} ${data.errorMsg || ''}`.trim());
+      }
+
+      // 兼容不同厂商/网关的字段：
+      let text =
+        data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.content ||
+        // 顶层直接给字符串
+        (typeof data?.result === 'string' ? data.result : '') ||
+        // 顶层 result 对象里可能再嵌 result/output_text/choices
+        (typeof data?.result?.result === 'string' ? data.result.result : '') ||
+        (typeof data?.result?.output_text === 'string' ? data.result.output_text : '') ||
+        (Array.isArray(data?.result?.choices) && typeof data.result.choices[0]?.message?.content === 'string'
+          ? data.result.choices[0].message.content
+          : '') ||
+        data?.output_text ||
+        (Array.isArray(data?.data) && typeof data.data[0]?.content === 'string' ? data.data[0].content : '');
+      if (typeof text === 'string') text = text.trim();
+      if (!text) {
+        throw new Error('LLM 未返回文本');
+      }
+      return { title: destination ? `${destination} 行程规划` : 'AI 行程', text };
+    }
+
+    function buildMockPlan(destination, origin, dateStr, preferences) {
+      const city = destination || '上海';
+      const title = `${city} 行程规划`;
+
+      // 固定三天示例：外滩、南京东路、豫园等
+      const themes = [
+        {
+          title: '上海经典地标',
+          spots: [
+            { name: '外滩', notes: '夜景最佳，建议19:00后' },
+            { name: '南京东路步行街', notes: '感受百年商业街的繁华气息' },
+            { name: '人民广场', notes: '市中心漫步' }
+          ]
+        },
+        {
+          title: '城隍庙与豫园',
+          spots: [
+            { name: '城隍庙老街', notes: '小吃云集，体验市井风味' },
+            { name: '豫园', notes: '江南经典园林，品味古典韵味' }
+          ]
+        },
+        {
+          title: '浦东地标之旅',
+          spots: [
+            { name: '上海中心大厦观景台', notes: '俯瞰陆家嘴天际线' },
+            { name: '东方明珠', notes: '必打卡地标，夜晚更惊艳' },
+            { name: '上海博物馆', notes: '文化展览' },
+            { name: '上海科技馆', notes: '互动体验' }
+          ]
+        }
+      ];
+
+      const planText = themes.map((theme, index) => {
+        const lines = [`第${index + 1}天 ${theme.title}`];
+        theme.spots.forEach(spot => {
+          lines.push(`- [上海] ${spot.name}（${spot.notes}）`);
+        });
+        return lines.join('\n');
+      }).join('\n\n');
+
+      const planJson = {
+        title,
+        days: themes.map((theme, index) => ({
+          title: `第${index + 1}天 ${theme.title}`,
+          city: '上海',
+          notes: null,
+          places: theme.spots.map(spot => ({
+            name: spot.name,
+            address: null,
+            location: null,
+            type: null,
+            status: null,
+            notes: spot.notes,
+            city: '上海',
+            cityUsedForSearch: '上海'
+          }))
+        }))
+      };
+
+      const preferenceSentence = preferences.length
+        ? `结合您的偏好：${preferences.join('、')}，`
+        : '';
+      const summary = `【AI生成行程】根据${origin || '上海'}出发，${preferenceSentence}推荐如下：\n\n${planText}`;
+
+      return {
+        text: planText,
+        json: planJson,
+        summary
+      };
+    }
+
+    function persistState(plan) {
+      try {
+        localStorage.setItem('wanderAi.itineraryText', plan.text);
+        localStorage.setItem('wanderAi.itineraryJson', JSON.stringify(plan.json));
+        localStorage.setItem('wanderAi.itineraryTitle', plan.json.title || 'AI 行程');
+        localStorage.setItem('wanderAi.lastPreferences', JSON.stringify(Array.from(selectedPreferences)));
+        localStorage.setItem('wanderAi.lastForm', JSON.stringify({
+          origin: document.getElementById('field-origin').value,
+          destination: document.getElementById('field-destination').value,
+          date: document.getElementById('field-date').value
+        }));
+      } catch (_) {
+        /* 忽略 storage 限制 */
+      }
+    }
+
+    function loadPersistedState() {
+      try {
+        const savedPrefs = JSON.parse(localStorage.getItem('wanderAi.lastPreferences') || '[]');
+        savedPrefs.forEach(id => selectedPreferences.add(id));
+      } catch (_) {}
+
+      try {
+        const savedForm = JSON.parse(localStorage.getItem('wanderAi.lastForm') || 'null');
+        if (savedForm) {
+          document.getElementById('field-origin').value = savedForm.origin || '';
+          document.getElementById('field-destination').value = savedForm.destination || '';
+          document.getElementById('field-date').value = savedForm.date || '';
+        }
+      } catch (_) {}
+
+      try {
+        const savedJsonRaw = localStorage.getItem('wanderAi.itineraryJson');
+        const savedText = localStorage.getItem('wanderAi.itineraryText');
+        if (savedJsonRaw && savedText) {
+          const savedJson = JSON.parse(savedJsonRaw);
+          state.itineraryText = savedText;
+          state.itineraryJson = savedJson;
+          appendMessage('system', '已为您保留上一份 AI 行程，可直接查看地图或重新生成。');
+          appendMessage('ai', `【上次推荐】\n${savedText}`);
+          setMapButtonsEnabled(true);
+        } else {
+          appendMessage('system', '欢迎使用 WanderAI！先填写旅程信息，然后点击 “AI规划行程”。');
+          setMapButtonsEnabled(false);
+        }
+      } catch (_) {
+        appendMessage('system', '欢迎使用 WanderAI！先填写旅程信息，然后点击 “AI规划行程”。');
+        setMapButtonsEnabled(false);
+      }
+    }
+
+    async function handleAiPlan() {
+      const origin = document.getElementById('field-origin').value.trim();
+      const destination = document.getElementById('field-destination').value.trim();
+      const dateValue = document.getElementById('field-date').value;
+      const preferenceItems = getSelectedPreferenceItems();
+      const preferences = preferenceItems.map(item => item.display);
+      const preferenceLabels = preferenceItems.map(item => item.label);
+      const manualModelLabels = preferenceItems
+        .map(item => item.modelLabel)
+        .filter(Boolean);
+
+      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。请生成 2-3 天行程。`;
+      appendMessage('user', planRequest);
+
+      // 如果配置了 LLM，则优先请求真实模型；否则回退到本地示例
+      const { ep } = getLLMSettings();
+      try {
+        // 优先尝试调用本地分类器，为 LLM 增加强偏好约束
+        let systemExtra = '';
+        if (manualModelLabels.length) {
+          const picked = manualModelLabels[0];
+          systemExtra = `${buildSystemPromptByLabel(picked)}\n（手动指定偏好类型：${picked}）`;
+          appendMessage('system', `已按你手动选择的标签规划：${picked}`);
+        } else {
+          try {
+            const userDesc = `出发地：${origin || '未填写'}；目的地：${destination || '未填写'}；日期：${dateValue || '未填写'}；偏好：${(preferenceLabels || []).join('、') || '未选择'}`;
+            const cls = await callLocalClassifier(userDesc);
+            if (cls && cls.label) {
+              const styleHead = buildSystemPromptByLabel(cls.label);
+              systemExtra = `${styleHead}\n（偏好类型：${cls.label}，置信度约${Math.round((cls.score || 0) * 100)}%）`;
+              if (DEBUG) console.log('[classify] applied label prompt', { label: cls.label, score: cls.score, systemExtra });
+              appendMessage('system', `偏好识别：${cls.label}（${Math.round((cls.score || 0) * 100)}%）`);
+            } else if (DEBUG) {
+              console.warn('[classify] no label in response', cls);
+            }
+          } catch (err) {
+            // 分类失败不影响主流程
+            if (DEBUG) console.warn('[classify] skipped, fallback to LLM-only prompt', err);
+          }
+        }
+
+        state.tripContext = { origin, destination, date: dateValue, preferences };
+        state.systemExtra = systemExtra;
+        state.chatHistory = [{ role: 'user', content: planRequest }];
+        trimChatHistory();
+
+        // 走代理只需 ep（和 body 里提供 model）；不强制要求前端有 key
+        if (ep) {
+          const { title, text } = await callLLMItinerary({
+            origin,
+            destination,
+            date: dateValue,
+            preferences,
+            systemExtra,
+            chatHistory: state.chatHistory
+          });
+          state.itineraryText = text;
+          state.itineraryJson = null;
+          state.chatHistory.push({ role: 'ai', content: text });
+          trimChatHistory();
+          appendMessage('ai', `【AI生成行程】\n${text}`);
+          try {
+            localStorage.setItem('wanderAi.itineraryText', text);
+            if (title) localStorage.setItem('wanderAi.itineraryTitle', title);
+          } catch (_) {}
+          setMapButtonsEnabled(true);
+          showToast('行程已生成（LLM）');
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('LLM 生成失败，已回退示例：' + (e.message || e), 'error');
+      }
+
+      const plan = buildMockPlan(destination, origin, dateValue, preferences);
+      state.itineraryText = plan.text;
+      state.itineraryJson = plan.json;
+      appendMessage('ai', plan.summary);
+      persistState(plan);
+      setMapButtonsEnabled(true);
+      showToast('行程已生成（示例）');
+    }
+
+    async function handleChatSend() {
+      const inputEl = document.getElementById('chatInput');
+      const text = (inputEl.value || '').trim();
+      if (!text) {
+        showToast('请输入对话内容', 'error');
+        return;
+      }
+      if (!state.tripContext) {
+        showToast('请先点击“AI规划行程”创建首轮行程', 'error');
+        return;
+      }
+
+      inputEl.value = '';
+      appendMessage('user', text);
+      state.chatHistory.push({ role: 'user', content: text });
+      trimChatHistory();
+
+      try {
+        const { text: reply } = await callLLMItinerary({
+          origin: state.tripContext.origin,
+          destination: state.tripContext.destination,
+          date: state.tripContext.date,
+          preferences: state.tripContext.preferences,
+          systemExtra: state.systemExtra,
+          chatHistory: state.chatHistory
+        });
+        state.chatHistory.push({ role: 'ai', content: reply });
+        trimChatHistory();
+        state.itineraryText = reply;
+        appendMessage('ai', reply);
+        try {
+          localStorage.setItem('wanderAi.itineraryText', reply);
+        } catch (_) {}
+      } catch (e) {
+        console.error(e);
+        showToast('对话失败：' + (e.message || e), 'error');
+      }
+    }
+
+    function handleViewMap() {
+      if (!state.itineraryText) {
+        try {
+          const storedText = localStorage.getItem('wanderAi.itineraryText');
+          if (!storedText) {
+            showToast('请先让 AI 生成行程', 'error');
+            return;
+          }
+        } catch (_) {
+          showToast('请先让 AI 生成行程', 'error');
+          return;
+        }
+      }
+      window.location.href = './output-map.html';
+    }
+
+    function clearConversation() {
+      chatLogEl.innerHTML = '';
+      appendMessage('system', '已清空记录，可重新输入信息生成新行程。');
+      state.itineraryJson = null;
+      state.itineraryText = '';
+      state.chatHistory = [];
+      state.tripContext = null;
+      state.systemExtra = '';
+      try {
+        localStorage.removeItem('wanderAi.itineraryText');
+        localStorage.removeItem('wanderAi.itineraryJson');
+        localStorage.removeItem('wanderAi.itineraryTitle');
+      } catch (_) {}
+      setMapButtonsEnabled(false);
+      showToast('历史对话已清空');
+    }
+
+    // Event bindings
+    document.getElementById('prefTrigger').addEventListener('click', () => {
+      document.getElementById('prefDialog').classList.add('active');
+    });
+    document.getElementById('prefCancel').addEventListener('click', () => {
+      document.getElementById('prefDialog').classList.remove('active');
+    });
+    document.getElementById('prefConfirm').addEventListener('click', () => {
+      document.getElementById('prefDialog').classList.remove('active');
+      updatePreferenceSummary();
+      showToast('已更新旅行偏好');
+    });
+
+    document.getElementById('aiPlanBtn').addEventListener('click', handleAiPlan);
+    document.getElementById('manualBtn').addEventListener('click', () => {
+      showToast('手动线路功能即将上线，敬请期待！', 'error');
+    });
+    document.getElementById('clearChatBtn').addEventListener('click', clearConversation);
+    document.getElementById('chatSendBtn').addEventListener('click', handleChatSend);
+    viewMapButtons.forEach(btn => btn.addEventListener('click', handleViewMap));
+    document.getElementById('chatInput').addEventListener('keydown', evt => {
+      if (evt.key === 'Enter' && !evt.shiftKey) {
+        evt.preventDefault();
+        handleChatSend();
+      }
+    });
+
+    document.addEventListener('keydown', evt => {
+      if (evt.key === 'Escape') {
+        document.getElementById('prefDialog').classList.remove('active');
+      }
+    });
+
+    // Initialize
+    loadPersistedState();
+    renderPreferenceOptions();
+    updatePreferenceSummary();
+  </script>
+</body>
+</html>
+

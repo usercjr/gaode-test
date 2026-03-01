@@ -1,0 +1,10 @@
+.env
+.env.local
+node_modules
+.env
+.venv/
+python_service/.venv*/
+node_modules/
+__pycache__/
+*.pyc
+best_model/model_state.pdparams
