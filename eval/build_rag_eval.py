@@ -187,18 +187,20 @@ async def judge(llm: LLMClient, queries: List[dict], pools: List[dict], corpus: 
 REVIEW_PER_GRADE = 20  # 每个 LLM 分数档抽 20 对，共 60 对，人工几分钟可完成
 
 
-def export_review(judged: List[dict], corpus: Dict[str, dict]) -> None:
+def export_review(judged: List[dict], corpus: Dict[str, dict], seed: int = SEED, excerpt_len: int = 300,
+                  exclude: frozenset = frozenset()) -> None:
     """按 LLM 分数分层抽样（查询, 笔记）对，供人工核验判分一致率。已有人工填写时不覆盖。"""
     if REVIEW_PATH.exists():
         with REVIEW_PATH.open(encoding="utf-8-sig") as f:
             if any(row[-1].strip() for row in list(csv.reader(f))[1:]):
                 print(f"[review] {REVIEW_PATH} already has human grades, skip")
                 return
-    rng = random.Random(SEED)
+    rng = random.Random(seed)
     pairs_by_grade: Dict[int, List[tuple]] = {0: [], 1: [], 2: []}
     for j in judged:
         for nid, g in j["grades"].items():
-            pairs_by_grade[g].append((j, nid, g))
+            if (j["qid"], nid) not in exclude:  # 跳过之前轮次已标过的对
+                pairs_by_grade[g].append((j, nid, g))
     sample = []
     for g in (2, 1, 0):
         sample += rng.sample(pairs_by_grade[g], min(REVIEW_PER_GRADE, len(pairs_by_grade[g])))
@@ -209,7 +211,7 @@ def export_review(judged: List[dict], corpus: Dict[str, dict]) -> None:
         w.writerow(["no", "query", "note_title", "note_excerpt", "your_grade(0/1/2)"])
         for i, (j, nid, _g) in enumerate(sample, start=1):
             note = corpus[nid]
-            excerpt = note["text"][:150].replace("\n", " ")
+            excerpt = note["text"][:excerpt_len].replace("\n", " ")
             w.writerow([i, j["query"], note["title"], excerpt, ""])
     write_jsonl(REVIEW_KEY_PATH, [{"no": i, "qid": j["qid"], "note_id": nid, "llm_grade": g}
                                   for i, (j, nid, g) in enumerate(sample, start=1)])
