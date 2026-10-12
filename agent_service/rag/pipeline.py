@@ -1,4 +1,4 @@
-"""RAG 流水线：意图改写 → 向量召回 → LLM 重排 → 引用回答。
+"""RAG 流水线：意图改写 → 混合检索（地名过滤 + 向量/BM25 + RRF）→ 重排 → 引用回答。
 
 LLM 步骤失败时逐级降级（不让整个请求失败），并把被跳过的能力记入 degraded，
 由接口返回给前端提示用户。
@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from core.errors import AppError, ErrorCode
 from core.llm import LLMClient
 from core.logging import get_logger
-from rag.store import VectorStore
+from rag.retriever import Retriever
 
 log = get_logger("rag.pipeline")
 
@@ -55,16 +55,24 @@ def _similarity(hit: Dict[str, Any]) -> Optional[float]:
 
 
 class RagPipeline:
-    def __init__(self, store: VectorStore, llm: LLMClient, llm_model: str):
-        self.store = store
+    def __init__(self, retriever: Retriever, llm: LLMClient, llm_model: str):
+        self.retriever = retriever
         self.llm = llm
         self.llm_model = llm_model
 
-    async def _recall(self, query: str, n: int) -> List[Dict[str, Any]]:
+    async def _retrieve(self, query: str, top_k: int, rerank: str, degraded: List[str]) -> Dict[str, Any]:
+        """调用同步检索器；交叉编码器出错时降级为不重排，向量库出错时报 RAG_UNAVAILABLE。"""
         try:
-            return await run_in_threadpool(self.store.recall, query, n)
+            return await run_in_threadpool(self.retriever.retrieve, query, top_k, rerank=rerank)
         except Exception as e:
-            log.exception("vector recall failed")
+            if rerank == "cross_encoder":
+                log.exception("rerank failed, retrying without rerank")
+                degraded.append("rerank")
+                try:
+                    return await run_in_threadpool(self.retriever.retrieve, query, top_k, rerank="none")
+                except Exception as e2:
+                    e = e2
+            log.exception("retrieval failed")
             raise AppError(ErrorCode.RAG_UNAVAILABLE, detail=str(e)) from e
 
     async def intent_understand(self, query: str, default_top_k: int, degraded: List[str]) -> Dict[str, Any]:
@@ -160,46 +168,51 @@ class RagPipeline:
         if extra:
             recall_query = f"{recall_query} {extra}"
 
-        n_recall = max(top_k * 3, 15) if use_rerank else top_k
-        recalled = await self._recall(recall_query, n_recall)
-        if use_rerank and len(recalled) > top_k:
-            ranked = await self.llm_rerank(query, recalled, top_k, degraded)
-        else:
-            ranked = recalled[:top_k]
+        rerank = self.retriever.cfg.rerank if use_rerank else "none"
+        result = await self._retrieve(recall_query, top_k, rerank, degraded)
+        hits = result["hits"]
+        if rerank == "llm":
+            hits = await self.llm_rerank(query, hits, top_k, degraded)
 
-        hits = [{"title": h["title"], "text": h["text"], "similarity": _similarity(h)} for h in ranked]
-        return {"query": query, "hits": hits, "count": len(hits), "degraded": degraded}
+        return {
+            "query": query,
+            "hits": [_public_hit(h) for h in hits],
+            "count": len(hits),
+            "places": result["places"],
+            "degraded": degraded,
+        }
 
     async def search(self, query: str, top_k: int = 5, rerank_k: int = 10) -> Dict[str, Any]:
         degraded: List[str] = []
         intent = await self.intent_understand(query, rerank_k, degraded)
-        n_results = max(int(intent.get("top_k", rerank_k)), rerank_k)
-        recalled = await self._recall(intent.get("query_rewrite") or query, n_results)
-        reranked = await self.llm_rerank(query, recalled, max(top_k, 1), degraded)
+        rerank = self.retriever.cfg.rerank
+        result = await self._retrieve(intent.get("query_rewrite") or query, max(top_k, 1), rerank, degraded)
+        hits = result["hits"]
+        if rerank == "llm":
+            hits = await self.llm_rerank(query, hits, max(top_k, 1), degraded)
 
         try:
-            answer = await self.answer_with_context(query, reranked)
+            answer = await self.answer_with_context(query, hits)
         except AppError as e:
             # 回答生成失败时仍返回召回结果，前端可展示片段
             degraded.append("answer")
             answer = f"回答生成失败：{e.message}"
 
-        hits = [
-            {
-                "rank": i,
-                "title": h["title"],
-                "text": h["text"],
-                "similarity": _similarity(h),
-                "distance": h.get("distance"),
-                "metadata": h.get("metadata", {}),
-            }
-            for i, h in enumerate(reranked, start=1)
-        ]
         return {
             "query": query,
             "intent": intent,
-            "recalled_count": len(recalled),
-            "hits": hits,
+            "places": result["places"],
+            "hits": [{"rank": i, **_public_hit(h)} for i, h in enumerate(hits, start=1)],
             "answer": answer,
             "degraded": degraded,
         }
+
+
+def _public_hit(h: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "note_id": h.get("row_id", ""),
+        "title": h.get("title", ""),
+        "text": h.get("text", ""),
+        "similarity": _similarity(h),
+        "rerank_score": round(h["rerank_score"], 4) if h.get("rerank_score") is not None else None,
+    }

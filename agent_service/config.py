@@ -6,7 +6,7 @@
 """
 from functools import lru_cache
 from pathlib import Path
-from typing import Tuple, Type
+from typing import Literal, Tuple, Type
 
 from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
@@ -43,6 +43,18 @@ class RAGConfig(BaseModel):
     data_dir: Path = Path("data")  # 入库只允许读取该目录下的文件
 
 
+class RetrievalConfig(BaseModel):
+    mode: Literal["vector", "bm25", "hybrid"] = "hybrid"
+    candidate_k: int = Field(30, ge=5, le=200)  # 每一路召回的候选数
+    rerank_k: int = Field(20, ge=1, le=100)  # 送入交叉编码器的候选数（CPU 上约 140ms/条，决定重排延迟）
+    rrf_k: int = Field(60, ge=1)
+    rerank: Literal["cross_encoder", "llm", "none"] = "cross_encoder"
+    reranker_model: str = "BAAI/bge-reranker-base"
+    reranker_max_length: int = Field(256, ge=64, le=1024)
+    city_filter: bool = True  # 查询中识别到城市/省份时，只在相关笔记中检索
+    metadata_path: Path = Path("data/notes_metadata.jsonl")
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(8002, ge=1, le=65535)
@@ -69,6 +81,7 @@ class Settings(BaseSettings):
     )
     llm: LLMConfig = LLMConfig()
     rag: RAGConfig = RAGConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 
@@ -92,7 +105,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _resolve(self) -> "Settings":
         # 相对路径一律相对项目根目录，避免因启动目录不同而读写到别处
-        for section, attr in ((self.rag, "db_dir"), (self.rag, "data_dir"), (self.logging, "dir")):
+        for section, attr in (
+            (self.rag, "db_dir"),
+            (self.rag, "data_dir"),
+            (self.retrieval, "metadata_path"),
+            (self.logging, "dir"),
+        ):
             path = getattr(section, attr)
             if not path.is_absolute():
                 setattr(section, attr, (ROOT_DIR / path).resolve())

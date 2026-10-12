@@ -1,7 +1,7 @@
 """向量库：embedding + ChromaDB。全部为同步 CPU/IO 操作，异步层通过线程池调用。"""
 import hashlib
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -92,7 +92,15 @@ class VectorStore:
                 doc_id = hashlib.md5(f"{source}|{row_id}|{idx}|{payload_text}".encode("utf-8")).hexdigest()
                 ids.append(doc_id)
                 docs.append(payload_text)
-                metas.append({"source": source, "row_id": str(row_id), "title": title, "chunk_index": idx})
+                metas.append(
+                    {
+                        "source": source,
+                        "row_id": str(row_id),
+                        "csv_id": str(row.get("csv_id", "")),
+                        "title": title,
+                        "chunk_index": idx,
+                    }
+                )
 
         for st in range(0, len(docs), batch_size):
             ed = min(len(docs), st + batch_size)
@@ -111,14 +119,37 @@ class VectorStore:
         log.info("ingest done", extra={"source": source, **result})
         return result
 
-    # ---------- 召回 ----------
-    def recall(self, query: str, n_results: int = 12) -> List[Dict[str, Any]]:
+    # ---------- 读取 ----------
+    def all_chunks(self) -> Dict[str, List[Any]]:
+        """全部 chunk（用于构建 BM25 索引）：{ids, documents, metadatas}。"""
         self.ensure_ready()
+        res = self._collection.get(include=["documents", "metadatas"])
+        return {"ids": res["ids"], "documents": res["documents"], "metadatas": res["metadatas"]}
+
+    def get_chunks(self, chunk_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not chunk_ids:
+            return {}
+        self.ensure_ready()
+        res = self._collection.get(ids=chunk_ids, include=["documents", "metadatas"])
+        return {
+            cid: {"text": doc or "", "metadata": md or {}}
+            for cid, doc, md in zip(res["ids"], res["documents"], res["metadatas"])
+        }
+
+    # ---------- 召回 ----------
+    def recall(
+        self, query: str, n_results: int = 12, allowed_rows: Optional[Set[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """向量召回。allowed_rows 不为空时只在这些笔记的 chunk 中检索。"""
+        self.ensure_ready()
+        where = {"row_id": {"$in": sorted(allowed_rows)}} if allowed_rows else None
         res = self._collection.query(
             query_embeddings=self.embed([query]),
             n_results=n_results,
+            where=where,
             include=["documents", "metadatas", "distances"],
         )
+        ids = (res.get("ids") or [[]])[0]
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         distances = (res.get("distances") or [[]])[0]
@@ -129,6 +160,8 @@ class VectorStore:
             hits.append(
                 {
                     "idx": i,
+                    "chunk_id": ids[i],
+                    "row_id": md.get("row_id", ""),
                     "title": md.get("title") or "",
                     "text": doc or "",
                     "distance": float(dist) if dist is not None else None,

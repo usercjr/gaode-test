@@ -22,6 +22,7 @@ from core.llm import LLMClient
 from core.logging import get_logger, request_id_var, setup_logging
 from rag.ingest import load_csv_records
 from rag.pipeline import RagPipeline
+from rag.retriever import Retriever
 from rag.store import VectorStore
 
 settings = get_settings()
@@ -32,6 +33,7 @@ log = get_logger("app")
 class Services:
     llm: LLMClient
     store: VectorStore
+    retriever: Retriever
     rag: RagPipeline
 
 
@@ -45,13 +47,18 @@ async def lifespan(_app: FastAPI):
         log.warning("LLM_API_KEY is not set; LLM features will fail with UPSTREAM_LLM_AUTH")
     services.llm = LLMClient(settings)
     services.store = VectorStore(settings.rag)
-    services.rag = RagPipeline(services.store, services.llm, settings.rag.llm_model)
-    # 预加载 embedding 模型和向量库，避免首个请求因冷启动超时；失败不阻止启动，由 /readyz 反映
+    services.retriever = Retriever(services.store, settings.retrieval)
+    services.rag = RagPipeline(services.retriever, services.llm, settings.rag.llm_model)
+    # 预加载 embedding 模型、向量库、BM25 索引和重排模型，避免首个请求因冷启动超时；
+    # 失败不阻止启动，由 /readyz 反映，请求时会再次尝试加载
     try:
         count = await run_in_threadpool(services.store.count)
         log.info("vector store ready", extra={"count": count})
+        await run_in_threadpool(services.retriever.load)
+        if settings.retrieval.rerank == "cross_encoder":
+            await run_in_threadpool(services.retriever.reranker.ensure_ready)
     except Exception:
-        log.exception("vector store warmup failed")
+        log.exception("warmup failed")
     yield
     await services.llm.aclose()
 
@@ -173,6 +180,13 @@ async def readyz():
         checks["vector_store"] = {"ok": True, "count": await run_in_threadpool(services.store.count)}
     except Exception as e:
         checks["vector_store"] = {"ok": False, "error": str(e)[:200]}
+    checks["retriever"] = {
+        "ok": services.retriever.ready,
+        "mode": settings.retrieval.mode,
+        "rerank": settings.retrieval.rerank,
+        "reranker_loaded": services.retriever.reranker.ready,
+        "notes_with_metadata": len(services.retriever.metadata),
+    }
     breaker = services.llm.breaker.snapshot()
     checks["llm"] = {
         "ok": settings.llm_enabled and breaker["state"] != "open",
@@ -212,6 +226,7 @@ async def ingest_csv(req: IngestCsvRequest):
         req.chunk_size,
         req.chunk_overlap,
     )
+    await run_in_threadpool(services.retriever.load)  # 重建 BM25 索引
     return {**result, "rows": len(records), "csv_path": str(csv_path)}
 
 

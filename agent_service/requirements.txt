@@ -6,3 +6,5 @@ sentence-transformers
 httpx
 pydantic-settings
 pyyaml
+jieba
+rank_bm25

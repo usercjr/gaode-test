@@ -16,6 +16,17 @@ rag:
   llm_model: ""                     # 为空则使用 llm.model
   data_dir: data                    # /ingest/csv 只允许读取该目录
 
+retrieval:
+  mode: hybrid                      # vector | bm25 | hybrid（BM25 + 向量，RRF 融合）
+  candidate_k: 30                   # 每路召回候选数
+  rerank_k: 20                      # 送入交叉编码器的候选数（CPU 约 140ms/条）
+  rrf_k: 60
+  rerank: cross_encoder             # cross_encoder | llm | none
+  reranker_model: BAAI/bge-reranker-base
+  reranker_max_length: 256
+  city_filter: true                 # 查询里出现城市/省份时只检索相关笔记
+  metadata_path: data/notes_metadata.jsonl
+
 server:
   host: 127.0.0.1
   port: 8002

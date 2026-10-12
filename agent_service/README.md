@@ -17,8 +17,13 @@ agent_service/
 ├─ rag/
 │  ├─ chunking.py       # 清洗与递归分块
 │  ├─ store.py          # embedding + ChromaDB（同步，经线程池调用）
-│  ├─ ingest.py         # CSV 读取
-│  └─ pipeline.py       # 意图改写 → 召回 → LLM 重排 → 引用回答（逐级降级）
+│  ├─ ingest.py         # CSV 读取（内容哈希作为笔记 ID、去重、跳过混入的表头）
+│  ├─ enrich.py         # LLM 抽取笔记元数据（城市/省份/景点/人群），缓存到 data/notes_metadata.jsonl
+│  ├─ metadata.py       # 元数据读取与查询地名识别
+│  ├─ bm25.py           # jieba + BM25 关键词检索、RRF 融合
+│  ├─ rerank.py         # bge-reranker 交叉编码器
+│  ├─ retriever.py      # 地名过滤 → 向量/BM25 → RRF → 重排
+│  └─ pipeline.py       # 意图改写 → 混合检索 → 引用回答（逐级降级）
 ├─ classifier/
 │  └─ llm_zero_shot.py  # 风格分类（LLM 零样本；本地微调模型上线后作兜底）
 └─ tests/               # pytest 单元测试
@@ -57,6 +62,25 @@ CSV 至少包含 `title`、`text` 两列；重复导入按稳定 ID 覆盖，不
 cd D:\gaode_test\agent_service
 .\.venv-win\Scripts\python.exe ingest_csv.py --csv ..\data\travel_notes.csv --reset
 ```
+
+### 元数据（用于地名过滤与 BM25 词典）
+
+增量执行：已抽取过的笔记会跳过；新增笔记后重跑即可。约每篇 1 次 LLM 调用。
+
+```powershell
+.\.venv-win\Scripts\python.exe -m rag.enrich --csv ..\data\travel_notes.csv
+```
+
+## 检索流程
+
+```text
+查询 ──► 地名识别（元数据词典最长匹配）──► 限定到相关笔记（结果不足时自动放宽）
+     ──► 向量召回 top-30  ┐
+     ──► BM25 召回 top-30 ┴► RRF 融合 ──► bge-reranker 重排前 20 ──► top-k
+```
+
+各环节都可在 `config.yaml` 的 `retrieval` 段开关；不同组合的效果与延迟见 `eval/rag_report.md`。
+行程规划时 `ai-chat.html` 调 `/retrieve` 传 `use_rerank: false`，跳过重排以控制延迟。
 
 ## 4) 启动
 

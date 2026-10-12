@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-12（P1 工程地基完成后）
+> **文档更新时间：** 2026-10-12（P2 RAG 2.0 完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 
@@ -12,7 +12,7 @@
 两条能力链路：
 
 1. **旅行规划**：LLM 零样本识别风格（8 类）→ 召回相关游记（RAG）→ LLM 生成行程 → 地图页解析景点并绘制路线。
-2. **RAG 问答**：LLM 意图改写 → 向量召回 → LLM 重排 → 基于片段的引用回答。
+2. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
 
@@ -26,7 +26,7 @@
 | 地图 | 高德 JS API 2.0 + Web 服务 API | POI 检索、地理编码、路线、地图展示 |
 | 网关 | Express 5 + node-fetch + dotenv | 页面托管、request-id、统一错误格式、高德代理、转发 |
 | Python 服务 | FastAPI + httpx + pydantic-settings | LLM 客户端、RAG、分类、行程生成 |
-| RAG | ChromaDB + sentence-transformers（bge-small-zh-v1.5） | 入库、召回 |
+| RAG | ChromaDB + bge-small-zh-v1.5（向量）、jieba + rank_bm25（关键词）、bge-reranker-base（重排） | 入库、混合召回、重排 |
 | LLM | DeepSeek（`deepseek-chat`，OpenAI 兼容接口，可在 `config.yaml` 切换） | 分类、行程、RAG 改写/重排/回答 |
 
 ---
@@ -79,7 +79,8 @@
   - 熔断：连续 5 次服务端类失败后断开 30 秒，期间快速失败。
   - 并发闸门：同时最多 8 个 LLM 调用。
   - 每次调用记录用途、模型、耗时、token 用量、错误码。
-- **RAG 降级**：改写、重排、回答任一步 LLM 失败都不让请求失败，跳过的步骤写入响应的 `degraded`。
+- **混合检索**（`rag/retriever.py`）：查询中识别到城市/省份时先限定到相关笔记（元数据由 `rag/enrich.py` 用 LLM 抽取），再做向量 + BM25 召回、RRF 融合、交叉编码器重排。评测见 `eval/rag_report.md`：nDCG@5 从纯向量 0.775 提升到 0.859，Recall@5 从 0.845 到 0.896（LLM 判分，待人工核验）。
+- **RAG 降级**：改写、回答任一步 LLM 失败或重排模型出错都不让请求失败，跳过的步骤写入响应的 `degraded`。
 - **分类降级**：LLM 不可用时返回默认标签 `Customized_AI_Tour`，`source: "default"`。
 - **日志**：JSON 行格式，带 `request_id`，按天滚动保留 14 天，错误单独写 `logs/agent.error.log`。
 
@@ -151,4 +152,17 @@ Invoke-RestMethod http://127.0.0.1:3000/api/readyz
 1. 高德 JS API 2.0 新 Key 需配置 `securityJsCode`，当前未配置。
 2. 行程仍是“LLM 输出文本 → 前端正则解析”，Agent 与结构化行程见规划 P3。
 3. 行程解析逻辑在 `output-map.html`、`src/parser.js`、`example/runAmapExample.js` 中各有一份。
-4. 尚无检索评测集，召回质量没有量化指标（规划 P2）。
+4. 检索评测的相关性标注由 LLM 完成，需人工抽检 `eval/data/rag_review.csv` 后再引用数字。
+5. 交叉编码器在 CPU 上重排 20 条约 3 秒，只用于 RAG 问答页；行程规划走不重排的路径（约 30ms）。
+6. `data/travel_notes.csv` 由两个文件合并，`id` 列有重复；系统改用内容哈希作为笔记 ID，原 `id` 保留为 `csv_id`。
+
+---
+
+## 八、评测
+
+```powershell
+# 构建评测集（生成查询 → 候选池 → LLM 判分；已完成的步骤会跳过）
+agent_service\.venv-win\Scripts\python.exe eval\build_rag_eval.py
+# 消融评测，输出 eval/rag_report.md
+agent_service\.venv-win\Scripts\python.exe eval\run_rag_eval.py
+```
