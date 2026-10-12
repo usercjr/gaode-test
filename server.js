@@ -18,7 +18,7 @@ const config = {
   agentBase: (process.env.AGENT_BASE || process.env.RAG_BASE || 'http://127.0.0.1:8002').replace(/\/+$/, ''),
   amapKey: (process.env.AMAP_WEB_SERVICE_KEY || '').trim(),
   // 各下游超时（毫秒）。行程生成包含 LLM 重试，给得最长
-  timeouts: { agentDefault: 30000, agentLong: 180000, amap: 8000 }
+  timeouts: { agentDefault: 30000, agentLong: 180000, agentPlan: 300000, amap: 8000 }
 };
 
 function validateConfig() {
@@ -121,6 +121,43 @@ function proxyToAgent(agentPath, timeoutMs = config.timeouts.agentDefault) {
   };
 }
 
+// SSE 流式转发：逐块透传 agent_service 的事件；浏览器断开时中止上游，避免继续消耗 LLM 调用
+function streamFromAgent(agentPath, timeoutMs) {
+  return async (req, res) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    res.on('close', () => controller.abort());
+    let upstream;
+    try {
+      upstream = await fetch(`${config.agentBase}${agentPath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Request-ID': res.locals.requestId },
+        body: JSON.stringify(req.body || {}),
+        signal: controller.signal
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      log('error', 'agent unreachable', { request_id: res.locals.requestId, path: agentPath, error: String(e) });
+      return sendError(res, e.name === 'AbortError' ? 'GATEWAY_TIMEOUT' : 'AGENT_UNAVAILABLE');
+    }
+    if (!upstream.ok) {
+      clearTimeout(timer);
+      return res.status(upstream.status).type('application/json').send(await upstream.text());
+    }
+    res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.flushHeaders();
+    upstream.body.on('data', chunk => res.write(chunk));
+    upstream.body.on('end', () => { clearTimeout(timer); res.end(); });
+    upstream.body.on('error', e => {
+      clearTimeout(timer);
+      if (e.name !== 'AbortError') log('warn', 'agent stream error', { request_id: res.locals.requestId, error: String(e) });
+      res.end();
+    });
+  };
+}
+
+app.post('/api/plan', proxyToAgent('/plan', config.timeouts.agentPlan));
+app.post('/api/plan/stream', streamFromAgent('/plan/stream', config.timeouts.agentPlan));
 app.post('/api/classify', proxyToAgent('/classify'));
 app.post('/api/itinerary', proxyToAgent('/itinerary', config.timeouts.agentLong));
 app.post('/api/rag/search', proxyToAgent('/search', config.timeouts.agentLong));

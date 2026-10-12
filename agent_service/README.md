@@ -13,7 +13,8 @@ agent_service/
 │  ├─ errors.py         # 错误码与统一错误响应
 │  ├─ logging.py        # JSON 结构化日志（按天滚动，错误单独成文件）
 │  ├─ resilience.py     # 熔断器、指数退避重试
-│  └─ llm.py            # 异步 LLM 客户端：超时/重试/熔断/并发闸门/调用日志
+│  ├─ llm.py            # 异步 LLM 客户端：超时/重试/熔断/并发闸门/调用日志，支持 tools
+│  └─ amap.py           # 异步高德客户端：客户端限速（QPS）、QPS 超限重试、LRU+TTL 缓存
 ├─ rag/
 │  ├─ chunking.py       # 清洗与递归分块
 │  ├─ store.py          # embedding + ChromaDB（同步，经线程池调用）
@@ -24,6 +25,13 @@ agent_service/
 │  ├─ rerank.py         # bge-reranker 交叉编码器
 │  ├─ retriever.py      # 地名过滤 → 向量/BM25 → RRF → 重排
 │  └─ pipeline.py       # 意图改写 → 混合检索 → 引用回答（逐级降级）
+├─ agent/
+│  ├─ orchestrator.py   # Function Calling 循环 + 校验自纠
+│  ├─ tools.py          # 工具定义与执行（笔记检索、POI、路线、天气、提交行程）
+│  ├─ validator.py      # 规则校验：POI 真实性、城市一致、路段/每日时长，路线时长用高德实算覆盖
+│  ├─ schemas.py        # 结构化行程（Pydantic）
+│  ├─ prompts.py        # 系统提示词
+│  └─ render.py         # 结构化行程 → 聊天文本
 ├─ classifier/
 │  └─ llm_zero_shot.py  # 风格分类（LLM 零样本；本地微调模型上线后作兜底）
 └─ tests/               # pytest 单元测试
@@ -100,7 +108,9 @@ cd D:\gaode_test\agent_service
 | POST | `/retrieve` | 轻量检索 `{query, top_k, style_label, use_rerank}` |
 | POST | `/search` | 完整 RAG 问答 `{query, top_k, rerank_k}` |
 | POST | `/classify` | 风格分类 `{text}` → `{label, score, source}` |
-| POST | `/itinerary` | 行程生成 `{messages, temperature}` → `{text, model}` |
+| POST | `/plan` | Agent 规划 `{destination, days, preferences, style_prompt, message, previous_itinerary}` → 结构化行程 + 文本 + 校验统计 |
+| POST | `/plan/stream` | 同上，SSE 推送 `status` / `tool_call` / `validation` 进度，最后 `done` 或 `error` |
+| POST | `/itinerary` | 文本行程生成（旧流程，Agent 不可用时前端回退使用）`{messages, temperature}` → `{text, model}` |
 | POST | `/ingest/csv` | 入库（仅本机，`csv_path` 必须位于 `data/` 内；不经网关暴露） |
 
 成功响应中的 `degraded` 列出被跳过的步骤（如 `query_rewrite`、`llm_rerank`、`answer`、`classify`）。
@@ -111,6 +121,22 @@ cd D:\gaode_test\agent_service
 ```
 
 错误码定义见 `core/errors.py`。
+
+## Agent 规划
+
+```text
+用户需求 → 地理编码目的地
+        → LLM（tools）循环：search_notes / poi_search / route_plan / get_weather（同一轮可并行）
+        → submit_itinerary → 校验器
+              ├─ 通过 → 用高德实算的路线时长回填 → 返回
+              └─ 不通过 → 问题列表作为工具结果回填 → LLM 修正（最多 2 次，仍不通过则带 warnings 返回）
+```
+
+校验规则：结构合法；天数一致；每个地点的 `poi_id` 必须来自本次 `poi_search`（防止编造坐标）；
+地点位于目的地（adcode 前缀，直辖市/省按 2 位）；不重复；相邻两站公交/地铁 ≤ 60 分钟；每日停留 + 交通 ≤ 12 小时。
+多轮修改时把上一版行程作为 `previous_itinerary` 传入，其中的地点视为已查询过。
+
+评测：`eval/run_agent_eval.py`，报告 `eval/agent_report.md`。
 
 ## 6) 测试
 

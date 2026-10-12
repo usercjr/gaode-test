@@ -2,6 +2,8 @@
 
 启动：cd agent_service && .venv-win\\Scripts\\python.exe app.py
 """
+import asyncio
+import json
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -10,13 +12,17 @@ from typing import List, Literal, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from agent.orchestrator import PlanAgent
+from agent.schemas import PlanRequest
+from agent.tools import ToolExecutor
 from classifier.llm_zero_shot import classify_style
 from config import get_settings
+from core.amap import AmapClient
 from core.errors import AppError, ErrorCode, error_body
 from core.llm import LLMClient
 from core.logging import get_logger, request_id_var, setup_logging
@@ -35,6 +41,8 @@ class Services:
     store: VectorStore
     retriever: Retriever
     rag: RagPipeline
+    amap: AmapClient
+    agent: PlanAgent
 
 
 services = Services()
@@ -49,6 +57,13 @@ async def lifespan(_app: FastAPI):
     services.store = VectorStore(settings.rag)
     services.retriever = Retriever(services.store, settings.retrieval)
     services.rag = RagPipeline(services.retriever, services.llm, settings.rag.llm_model)
+    services.amap = AmapClient(settings)
+    services.agent = PlanAgent(
+        services.llm, services.amap, ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k),
+        settings.agent,
+    )
+    if not settings.amap_enabled:
+        log.warning("AMAP_WEB_SERVICE_KEY is not set; /plan will fail")
     # 预加载 embedding 模型、向量库、BM25 索引和重排模型，避免首个请求因冷启动超时；
     # 失败不阻止启动，由 /readyz 反映，请求时会再次尝试加载
     try:
@@ -61,6 +76,7 @@ async def lifespan(_app: FastAPI):
         log.exception("warmup failed")
     yield
     await services.llm.aclose()
+    await services.amap.aclose()
 
 
 app = FastAPI(title="WanderAI Agent Service", version="0.2.0", lifespan=lifespan)
@@ -194,6 +210,12 @@ async def readyz():
         "model": settings.llm.model,
         "breaker": breaker,
     }
+    checks["amap"] = {
+        "ok": settings.amap_enabled,
+        "configured": settings.amap_enabled,
+        "cache_entries": len(services.amap.cache._data),
+        "cache_hits": services.amap.cache.hits,
+    }
     ready = all(c["ok"] for c in checks.values())
     return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, "checks": checks})
 
@@ -253,6 +275,54 @@ async def itinerary(req: ItineraryRequest):
         [m.model_dump() for m in req.messages], temperature=req.temperature, purpose="itinerary"
     )
     return {"text": text, "model": services.llm.default_model}
+
+
+@app.post("/plan")
+async def plan(req: PlanRequest):
+    """Agent 规划（一次性返回）。"""
+    return (await services.agent.plan(req)).to_dict()
+
+
+def _sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/plan/stream")
+async def plan_stream(req: PlanRequest):
+    """Agent 规划（SSE 流式）：status / tool_call / validation 进度事件，最后 done 或 error。"""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def emit(event: str, data) -> None:
+        await queue.put((event, data))
+
+    async def run() -> None:
+        try:
+            result = await services.agent.plan(req, emit)
+            await queue.put(("done", result.to_dict()))
+        except AppError as e:
+            log.warning("plan failed", extra={"code": e.code.value, "detail": str(e.detail)[:300] if e.detail else None})
+            await queue.put(("error", error_body(e.code, e.message, request_id_var.get())))
+        except Exception:
+            log.exception("plan crashed")
+            await queue.put(("error", error_body(ErrorCode.INTERNAL, ErrorCode.INTERNAL.spec.message, request_id_var.get())))
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    async def stream():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield _sse(*item)
+        finally:
+            if not task.done():  # 客户端断开时停止规划，避免继续消耗 LLM 调用
+                task.cancel()
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 if __name__ == "__main__":

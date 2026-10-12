@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-12（P2 RAG 2.0 完成后）
+> **文档更新时间：** 2026-10-12（P3 Agent 完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -12,7 +12,7 @@
 
 两条能力链路：
 
-1. **旅行规划**：LLM 零样本识别风格（8 类）→ 召回相关游记（RAG）→ LLM 生成行程 → 地图页解析景点并绘制路线。
+1. **旅行规划（Agent）**：LLM 零样本识别风格 → Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
 2. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
@@ -36,7 +36,8 @@
 
 ```text
 浏览器
-  ├─ ai-chat.html ── /api/classify ─────┐
+  ├─ ai-chat.html ── /api/plan/stream (SSE) ─┐
+  │                ── /api/classify ─────┤
   │                ── /api/rag/retrieve ─┤
   │                ── /api/itinerary ────┤
   ├─ rag-search.html ─ /api/rag/search ──┤
@@ -64,7 +65,7 @@
 
 - **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。
 - **request-id**：沿用前端/调用方传入的 `X-Request-ID`，否则生成；透传给 `agent_service` 并写入响应头。
-- **转发**：`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
+- **转发**：`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
 - **高德代理**：`GET /api/amap/{place-text|geocode|driving|walking}`，白名单接口，服务端追加 Key；高德业务错误（`status:"0"`）会记录日志。
 - **就绪检查**：`GET /api/readyz` 汇总网关与 `agent_service` 的依赖状态。
 - **启动校验**：端口、`AGENT_BASE` 非法时直接退出；未配置高德 Key 时告警。
@@ -87,6 +88,7 @@
 
 ### 4.3 `ai-chat.html`
 
+0. 表单新增“天数”；规划优先走 Agent（`/api/plan/stream`），进度在一个气泡里实时更新；多轮修改把上一版结构化行程回传给 Agent。以下 2~4 步是 Agent 失败时的回退流程。
 1. 用户手动选了风格标签则直接用，否则调用 `/api/classify`（10 秒超时）。
 2. 用识别出的标签调用 `/api/rag/retrieve`（仅向量召回，15 秒超时）；失败时在对话中提示“本次未参考真实游记”。
 3. 风格提示 + 笔记片段组成 system 消息，连同最近 30 条对话发给 `/api/itinerary`。
@@ -151,7 +153,7 @@ Invoke-RestMethod http://127.0.0.1:3000/api/readyz
 ## 七、已知问题
 
 1. 高德 JS API 2.0 新 Key 需配置 `securityJsCode`，当前未配置。
-2. 行程仍是“LLM 输出文本 → 前端正则解析”，Agent 与结构化行程见规划 P3。
+2. Agent 规划单次约 30~50 秒、约 5 万 token；高德个人 Key 有 QPS 与日配额限制（客户端限速 3 QPS）。
 3. 行程解析逻辑在 `output-map.html`、`src/parser.js`、`example/runAmapExample.js` 中各有一份。
 4. 检索评测的相关性标注由 LLM 完成，需人工抽检 `eval/data/rag_review.csv` 后再引用数字。
 5. 交叉编码器在 CPU 上重排 20 条约 3 秒，只用于 RAG 问答页；行程规划走不重排的路径（约 30ms）。

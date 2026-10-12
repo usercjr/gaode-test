@@ -67,6 +67,23 @@ class LLMClient:
         purpose: str = "chat",
     ) -> str:
         """返回 assistant 文本；失败时抛 AppError。purpose 用于日志区分调用场景。"""
+        result = await self.complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, purpose=purpose
+        )
+        return (result["message"].get("content") or "").strip()
+
+    async def complete(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        purpose: str = "chat",
+    ) -> Dict[str, Any]:
+        """完整的 chat/completions 调用，返回 {message, usage}。message 可能包含 tool_calls。"""
         if not self.enabled:
             raise AppError(ErrorCode.UPSTREAM_LLM_AUTH, "未配置 LLM_API_KEY")
         payload: Dict[str, Any] = {
@@ -76,6 +93,10 @@ class LLMClient:
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
 
         return await retry_async(
             lambda: self._call_once(payload, purpose),
@@ -83,7 +104,7 @@ class LLMClient:
             op=f"llm.{purpose}",
         )
 
-    async def _call_once(self, payload: Dict[str, Any], purpose: str) -> str:
+    async def _call_once(self, payload: Dict[str, Any], purpose: str) -> Dict[str, Any]:
         if not self.breaker.allow():
             raise AppError(ErrorCode.UPSTREAM_LLM_UNAVAILABLE, detail="circuit open")
 
@@ -101,8 +122,9 @@ class LLMClient:
                 code = _classify_http_error(status, resp.text)
                 raise AppError(code, detail=resp.text[:500])
             data = resp.json()
-            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-            if not text.strip():
+            message = (data.get("choices") or [{}])[0].get("message") or {}
+            # 工具调用轮的 content 可以为空；既没有文本也没有工具调用才算异常
+            if not (message.get("content") or "").strip() and not message.get("tool_calls"):
                 raise AppError(ErrorCode.UPSTREAM_LLM_BAD_RESPONSE, detail="empty content")
         except httpx.TimeoutException as e:
             self._finish(payload, purpose, started, status, ErrorCode.UPSTREAM_LLM_TIMEOUT)
@@ -118,7 +140,7 @@ class LLMClient:
             raise AppError(ErrorCode.UPSTREAM_LLM_BAD_RESPONSE, detail=str(e)) from e
 
         self._finish(payload, purpose, started, status, None, usage=data.get("usage"))
-        return text.strip()
+        return {"message": message, "usage": data.get("usage") or {}}
 
     def _finish(self, payload, purpose, started, status, code: Optional[ErrorCode], usage=None, detail=None):
         # 只有“服务端不可用”类错误计入熔断；额度/鉴权/参数问题重试也没用，但不代表服务挂了

@@ -141,7 +141,8 @@
       color: #1e293b;
     }
 
-    .input-field input {
+    .input-field input,
+    .input-field select {
       border-radius: 12px;
       border: 1px solid rgba(148, 163, 184, 0.35);
       background: rgba(255, 255, 255, 0.85);
@@ -150,7 +151,8 @@
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
-    .input-field input:focus {
+    .input-field input:focus,
+    .input-field select:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
@@ -458,6 +460,16 @@
           <label for="field-date">日期 / 时间</label>
           <input id="field-date" type="date" />
         </div>
+        <div class="input-field">
+          <label for="field-days">天数</label>
+          <select id="field-days">
+            <option value="1">1 天</option>
+            <option value="2">2 天</option>
+            <option value="3" selected>3 天</option>
+            <option value="4">4 天</option>
+            <option value="5">5 天</option>
+          </select>
+        </div>
       </div>
 
       <div class="preference-row">
@@ -578,7 +590,8 @@
       chatHistory: [],
       tripContext: null,
       systemExtra: '',
-      ragSnippets: ''
+      ragSnippets: '',
+      agentItinerary: null  // Agent 返回的结构化行程，多轮修改时回传
     };
     const MAX_CHAT_MESSAGES = 30;
 
@@ -840,6 +853,125 @@
       return { title: destination ? `${destination} 行程规划` : 'AI 行程', text };
     }
 
+    // ---------------- Agent 规划（Function Calling，SSE 流式进度） ----------------
+    const USE_AGENT = true;
+
+    // 读取 SSE：逐个解析 "event: x\ndata: {...}\n\n"
+    async function callAgentStream(body, onEvent) {
+      const resp = await fetch(`${API_BASE}/api/plan/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).catch(() => { throw new ApiError('无法连接服务，请检查网关是否启动', { code: 'NETWORK_ERROR', retryable: true }); });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        const err = data?.error || {};
+        throw new ApiError(err.message || `接口错误 ${resp.status}`, { code: err.code, requestId: err.request_id, status: resp.status });
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const event = (block.match(/^event: (.*)$/m) || [])[1];
+          const dataLine = (block.match(/^data: (.*)$/m) || [])[1];
+          if (!event || !dataLine) continue;
+          const data = JSON.parse(dataLine);
+          if (DEBUG) console.log('[agent]', event, data);
+          if (event === 'error') {
+            const err = data.error || {};
+            throw new ApiError(err.message || '规划失败', { code: err.code, retryable: err.retryable, requestId: err.request_id });
+          }
+          if (event === 'done') result = data;
+          else onEvent(event, data);
+        }
+      }
+      if (!result) throw new ApiError('规划中断，请重试', { code: 'STREAM_INTERRUPTED', retryable: true });
+      return result;
+    }
+
+    // 一个原地更新的进度气泡，避免几十条工具调用刷屏
+    function createProgressBubble() {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message system';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = '规划进度';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+      chatLogEl.appendChild(wrapper);
+      const counts = { search_notes: 0, poi_search: 0, route_plan: 0, get_weather: 0 };
+      const labels = { search_notes: '📚 检索笔记', poi_search: '📍 查询地点', route_plan: '🧭 计算路线', get_weather: '🌤️ 查天气' };
+      let stage = '准备中';
+      let latest = '';
+      const render = () => {
+        const parts = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${labels[k]} ×${n}`);
+        bubble.textContent = `${stage}${latest ? `\n最近：${latest}` : ''}${parts.length ? `\n${parts.join('  ')}` : ''}`;
+        chatLogEl.scrollTo({ top: chatLogEl.scrollHeight, behavior: 'smooth' });
+      };
+      render();
+      return (event, data) => {
+        if (event === 'status') stage = data.message;
+        if (event === 'tool_call') {
+          counts[data.tool] = (counts[data.tool] || 0) + 1;
+          if (data.brief) latest = `${labels[data.tool] || data.tool} ${data.brief}`;
+        }
+        if (event === 'validation') {
+          stage = data.passed ? '✅ 校验通过' : `🔧 校验发现 ${data.issues.length} 个问题，正在修正`;
+        }
+        render();
+      };
+    }
+
+    // 结构化行程 → 地图页的数据格式（坐标已由 Agent 校验，地图页无需再做地理编码）
+    function agentItineraryToMapJson(it) {
+      return {
+        title: it.title,
+        days: it.days.map(d => ({
+          title: d.theme || `第${d.day}天`,
+          city: it.city,
+          notes: null,
+          places: d.stops.filter(s => s.location).map(s => ({
+            name: s.name,
+            address: s.address || null,
+            location: { lng: s.location.lng, lat: s.location.lat, address: s.address || '', city: it.city },
+            type: s.category,
+            status: null,
+            notes: (s.tips || []).join('；') || null,
+            city: it.city
+          }))
+        }))
+      };
+    }
+
+    async function runAgentPlan(body) {
+      const onEvent = createProgressBubble();
+      const result = await callAgentStream(body, onEvent);
+      state.agentItinerary = result.itinerary;
+      state.itineraryText = result.text;
+      state.itineraryJson = agentItineraryToMapJson(result.itinerary);
+      try {
+        localStorage.setItem('wanderAi.itineraryText', result.text);
+        localStorage.setItem('wanderAi.itineraryJson', JSON.stringify(state.itineraryJson));
+        localStorage.setItem('wanderAi.itineraryTitle', result.itinerary.title || 'AI 行程');
+        localStorage.setItem('wanderAi.itinerarySource', 'agent');
+      } catch (_) {}
+      const v = result.validation || {};
+      const summary = `地点 ${v.stops_resolved}/${v.stops} 已匹配真实 POI · 路线 ${v.legs_verified}/${v.legs} 段经高德实算`
+        + (result.passed ? '' : ' · ⚠️ 部分问题未能自动修正');
+      appendMessage('system', `${summary}（${(result.latency_ms / 1000).toFixed(0)} 秒）`);
+      return result;
+    }
+
     function buildMockPlan(destination, origin, dateStr, preferences) {
       const city = destination || '上海';
       const title = `${city} 行程规划`;
@@ -973,7 +1105,8 @@
         .map(item => item.modelLabel)
         .filter(Boolean);
 
-      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。请生成 2-3 天行程。`;
+      const days = Number(document.getElementById('field-days').value || 3);
+      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。请生成 ${days} 天行程。`;
       appendMessage('user', planRequest);
 
       // 如果配置了 LLM，则优先请求真实模型；否则回退到本地示例
@@ -1010,6 +1143,26 @@
           }
         }
 
+        // Agent 规划：成功直接返回；失败回退到下面的“检索笔记 + 文本生成”流程
+        if (USE_AGENT && destination) {
+          try {
+            const result = await runAgentPlan({
+              destination, origin, days, start_date: dateValue,
+              preferences: preferenceLabels, style_prompt: systemExtra
+            });
+            state.tripContext = { origin, destination, date: dateValue, preferences, preferenceLabels, days };
+            state.systemExtra = systemExtra;
+            state.chatHistory = [{ role: 'user', content: planRequest }, { role: 'ai', content: result.text }];
+            appendMessage('ai', `【AI生成行程】\n${result.text}`);
+            setMapButtonsEnabled(true);
+            showToast('行程已生成（智能规划）');
+            return;
+          } catch (err) {
+            console.warn('[agent] failed, fallback to text generation', err);
+            appendMessage('system', `⚠️ 智能规划暂不可用（${describeError(err)}），改用快速生成`);
+          }
+        }
+
         if (ragQuery.trim()) {
           try {
             const rag = await callRAGRetrieve(ragQuery, detectedLabel, 5);
@@ -1026,9 +1179,10 @@
           }
         }
 
-        state.tripContext = { origin, destination, date: dateValue, preferences };
+        state.tripContext = { origin, destination, date: dateValue, preferences, preferenceLabels, days };
         state.systemExtra = systemExtra;
         state.ragSnippets = ragSnippets;
+        state.agentItinerary = null;
         state.chatHistory = [{ role: 'user', content: planRequest }];
         trimChatHistory();
 
@@ -1051,6 +1205,7 @@
           try {
             localStorage.setItem('wanderAi.itineraryText', text);
             if (title) localStorage.setItem('wanderAi.itineraryTitle', title);
+            localStorage.setItem('wanderAi.itinerarySource', 'text');
           } catch (_) {}
           setMapButtonsEnabled(true);
           showToast('行程已生成（LLM）');
@@ -1087,6 +1242,26 @@
       state.chatHistory.push({ role: 'user', content: text });
       trimChatHistory();
 
+      // 上一版是 Agent 生成的：把它和修改意见一起交给 Agent，在原行程上修改
+      if (USE_AGENT && state.agentItinerary) {
+        try {
+          const ctx = state.tripContext;
+          const result = await runAgentPlan({
+            destination: ctx.destination, origin: ctx.origin, days: ctx.days, start_date: ctx.date,
+            preferences: ctx.preferenceLabels || [], style_prompt: state.systemExtra,
+            message: text, previous_itinerary: state.agentItinerary
+          });
+          state.chatHistory.push({ role: 'ai', content: result.text });
+          trimChatHistory();
+          appendMessage('ai', result.text);
+          return;
+        } catch (err) {
+          console.warn('[agent] revise failed, fallback', err);
+          appendMessage('system', `⚠️ 智能修改暂不可用（${describeError(err)}），改用快速修改`);
+          state.agentItinerary = null;
+        }
+      }
+
       try {
         // 多轮对话时也尝试 RAG 检索，用用户最新消息+目的地作为 query
         let ragSnippets = state.ragSnippets || '';
@@ -1118,6 +1293,7 @@
         appendMessage('ai', reply);
         try {
           localStorage.setItem('wanderAi.itineraryText', reply);
+          localStorage.setItem('wanderAi.itinerarySource', 'text');
         } catch (_) {}
       } catch (e) {
         console.error(e);
@@ -1150,7 +1326,9 @@
       state.tripContext = null;
       state.systemExtra = '';
       state.ragSnippets = '';
+      state.agentItinerary = null;
       try {
+        localStorage.removeItem('wanderAi.itinerarySource');
         localStorage.removeItem('wanderAi.itineraryText');
         localStorage.removeItem('wanderAi.itineraryJson');
         localStorage.removeItem('wanderAi.itineraryTitle');

@@ -755,6 +755,7 @@
                         localStorage.setItem('wanderAi.itineraryText', rawText);
                         localStorage.setItem('wanderAi.itineraryJson', JSON.stringify(amapJson));
                         if (amapJson.title) localStorage.setItem('wanderAi.itineraryTitle', amapJson.title);
+                        localStorage.setItem('wanderAi.itinerarySource', 'text');
                     } catch (_) {
                         /* ignore storage errors */
                     }
@@ -816,7 +817,13 @@
                         }
                     }
 
-                    const autoText = storedText && storedText.trim();
+                    // Agent 生成的行程坐标已由服务端校验（来自高德 POI），直接使用，不再从文本重新解析与地理编码
+                    let fromAgent = false;
+                    try { fromAgent = localStorage.getItem('wanderAi.itinerarySource') === 'agent'; } catch (_) {}
+                    const agentDataReady = fromAgent && initialData && initialData.days && initialData.days.length;
+                    if (agentDataReady) setGenerateStatus('✅ 已加载智能规划的行程（地点坐标已校验）', 'success');
+
+                    const autoText = !agentDataReady && storedText && storedText.trim();
                     if (autoText) {
                         setGenerateStatus('🔄 正在根据 AI 行程生成地图...', '');
                         regenerateMapFromText(autoText).catch(err => {

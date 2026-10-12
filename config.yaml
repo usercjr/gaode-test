@@ -27,6 +27,23 @@ retrieval:
   city_filter: true                 # 查询里出现城市/省份时只检索相关笔记
   metadata_path: data/notes_metadata.jsonl
 
+amap:
+  base_url: https://restapi.amap.com
+  timeout_s: 5
+  retry_attempts: 3           # 含 QPS 超限（10019/10020/10021）重试
+  qps: 3                      # 客户端限速，个人 Key 配额低；并行工具调用超过会报 10021
+  cache_size: 5000            # 进程内 LRU，地点/路线/天气结果复用
+  cache_ttl_s: 86400
+
+agent:
+  max_steps: 12               # 单次规划最多的 LLM 轮数
+  max_fix_rounds: 2           # 校验不通过后允许修正的次数
+  max_leg_minutes: 60         # 相邻两站交通时长上限
+  max_day_minutes: 720        # 每日停留 + 交通总时长上限
+  default_days: 3
+  notes_top_k: 4
+  temperature: 0.4
+
 server:
   host: 127.0.0.1
   port: 8002

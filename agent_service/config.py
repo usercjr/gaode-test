@@ -55,6 +55,25 @@ class RetrievalConfig(BaseModel):
     metadata_path: Path = Path("data/notes_metadata.jsonl")
 
 
+class AmapConfig(BaseModel):
+    base_url: str = "https://restapi.amap.com"
+    timeout_s: float = Field(5.0, gt=0)
+    retry_attempts: int = Field(3, ge=1, le=5)
+    qps: float = Field(3.0, ge=0)  # 客户端限速；个人开发者 Key 的 QPS 配额较低，0 表示不限
+    cache_size: int = Field(5000, ge=0)  # 进程内 LRU 条数；0 关闭
+    cache_ttl_s: int = Field(86400, ge=0)
+
+
+class AgentConfig(BaseModel):
+    max_steps: int = Field(12, ge=2, le=40)  # 单次规划最多的 LLM 轮数（含工具调用轮）
+    max_fix_rounds: int = Field(2, ge=0, le=5)  # 校验不通过后允许 LLM 修正的次数
+    max_leg_minutes: int = Field(60, ge=5)  # 相邻两站交通时长上限
+    max_day_minutes: int = Field(720, ge=60)  # 每日停留 + 交通总时长上限
+    default_days: int = Field(3, ge=1, le=10)
+    notes_top_k: int = Field(4, ge=1, le=10)
+    temperature: float = Field(0.4, ge=0.0, le=1.5)
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(8002, ge=1, le=65535)
@@ -79,9 +98,12 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = Field(
         SecretStr(""), validation_alias=AliasChoices("LLM_API_KEY", "DASHSCOPE_API_KEY")
     )
+    amap_web_service_key: SecretStr = Field(SecretStr(""), validation_alias=AliasChoices("AMAP_WEB_SERVICE_KEY"))
     llm: LLMConfig = LLMConfig()
     rag: RAGConfig = RAGConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    amap: AmapConfig = AmapConfig()
+    agent: AgentConfig = AgentConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 
@@ -122,10 +144,15 @@ class Settings(BaseSettings):
     def llm_enabled(self) -> bool:
         return bool(self.llm_api_key.get_secret_value().strip())
 
+    @property
+    def amap_enabled(self) -> bool:
+        return bool(self.amap_web_service_key.get_secret_value().strip())
+
     def public_view(self) -> dict:
         """可安全输出到日志/接口的配置（不含密钥）。"""
-        data = self.model_dump(mode="json", exclude={"llm_api_key"})
+        data = self.model_dump(mode="json", exclude={"llm_api_key", "amap_web_service_key"})
         data["llm_enabled"] = self.llm_enabled
+        data["amap_enabled"] = self.amap_enabled
         return data
 
 

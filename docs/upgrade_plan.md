@@ -607,7 +607,7 @@ Chroma 中按用途拆分 collection：`notes`（游记经验）、`poi_profiles
 | P0 ✅ | 修复 RAG 环境、高德 Key 后移、切换 DeepSeek（已完成） | — | 当前版本可运行 |
 | P1 ✅ | 工程地基：`rag_service` → `agent_service`、配置外置、结构化日志、错误码、request-id、异步 LLM 客户端、重试/熔断 | 1 周 | 统一错误格式；日志可按 request_id 追踪 |
 | P2 ✅（数据扩充未做） | RAG 2.0：数据扩充、元数据抽取、BM25 + RRF、bge-reranker、评测集与消融表 | 1.5 周 | `eval/rag_report.md`，填入 Recall@5 / MRR |
-| P3 | Agent：Function Calling 循环、6 个工具、结构化行程、校验器、自纠、SSE、地图页改为读 JSON | 2 周 | `eval/agent_report.md`，填入工具成功率、地理匹配率 |
+| P3 ✅ | Agent：Function Calling 循环、6 个工具、结构化行程、校验器、自纠、SSE、地图页改为读 JSON | 2 周 | `eval/agent_report.md`，填入工具成功率、地理匹配率 |
 | P4 | 意图模型：数据构造、基线、微调、与 LLM 对比、路由上线 | 1.5 周 | `eval/classifier_report.md`，填入 macro-F1 |
 | P5 | 动态路由 + 多知识库 | 0.5 周 | 路由准确率 |
 | P6 | Memory：抽取/存储/摘要/约束校验/偏好面板 | 1 周 | 约束遵守率 |
