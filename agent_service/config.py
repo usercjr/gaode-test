@@ -74,6 +74,12 @@ class AgentConfig(BaseModel):
     temperature: float = Field(0.4, ge=0.0, le=1.5)
 
 
+class ClassifierConfig(BaseModel):
+    models_dir: Path = Path("agent_service/models")
+    style_model: str = "style_chinese-roberta-wwm-ext"  # 目录不存在时自动退回 LLM 零样本
+    route_model: str = "route_chinese-roberta-wwm-ext"
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(8002, ge=1, le=65535)
@@ -104,6 +110,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = RetrievalConfig()
     amap: AmapConfig = AmapConfig()
     agent: AgentConfig = AgentConfig()
+    classifier: ClassifierConfig = ClassifierConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 
@@ -131,6 +138,7 @@ class Settings(BaseSettings):
             (self.rag, "db_dir"),
             (self.rag, "data_dir"),
             (self.retrieval, "metadata_path"),
+            (self.classifier, "models_dir"),
             (self.logging, "dir"),
         ):
             path = getattr(section, attr)

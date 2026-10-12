@@ -1,0 +1,46 @@
+{
+ "val": {
+  "micro_f1": 0.8224852071005917,
+  "macro_f1": 0.8124708819019131,
+  "exact_match": 0.6323529411764706,
+  "none_f1": 0.7586206896551724,
+  "per_label_f1": {
+   "food": 0.93,
+   "nature": 0.732,
+   "culture": 0.818,
+   "citywalk": 0.78,
+   "photo": 0.825,
+   "rush": 0.791
+  }
+ },
+ "test": {
+  "micro_f1": 0.727007299270073,
+  "macro_f1": 0.7161848390182662,
+  "exact_match": 0.452,
+  "none_f1": 0.6779661016949152,
+  "per_label_f1": {
+   "food": 0.738,
+   "nature": 0.72,
+   "culture": 0.638,
+   "citywalk": 0.633,
+   "photo": 0.873,
+   "rush": 0.696
+  }
+ },
+ "thresholds": [
+  0.5,
+  0.6,
+  0.7,
+  0.65,
+  0.45,
+  0.6
+ ],
+ "train_seconds": 7.0,
+ "latency_ms_p50": 10.2,
+ "task": "style",
+ "method": "baseline",
+ "base": "BAAI/bge-small-zh-v1.5",
+ "n_train": 1231,
+ "n_val": 136,
+ "n_test": 250
+}

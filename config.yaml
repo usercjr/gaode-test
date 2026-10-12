@@ -44,6 +44,11 @@ agent:
   notes_top_k: 4
   temperature: 0.4
 
+classifier:
+  models_dir: agent_service/models  # 训练产物目录（不入库），见 classifier/train/train.py
+  style_model: style_chinese-roberta-wwm-ext   # 验证集最优，见 eval/classifier_report.md
+  route_model: route_chinese-roberta-wwm-ext
+
 server:
   host: 127.0.0.1
   port: 8002

@@ -1,0 +1,136 @@
+{
+ "val": {
+  "accuracy": 0.9519230769230769,
+  "macro_f1": 0.9551947762382544,
+  "per_label_f1": {
+   "plan": 0.96,
+   "notes_qa": 0.929,
+   "graph_qa": 1.0,
+   "realtime": 0.974,
+   "chitchat": 0.913
+  },
+  "confusion": [
+   [
+    12,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    1,
+    26,
+    0,
+    0,
+    1
+   ],
+   [
+    0,
+    0,
+    21,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    19,
+    0
+   ],
+   [
+    0,
+    2,
+    0,
+    1,
+    21
+   ]
+  ]
+ },
+ "test": {
+  "accuracy": 0.9409090909090909,
+  "macro_f1": 0.9397295997050505,
+  "per_label_f1": {
+   "plan": 0.959,
+   "notes_qa": 0.929,
+   "graph_qa": 0.941,
+   "realtime": 0.989,
+   "chitchat": 0.881
+  },
+  "confusion": [
+   [
+    47,
+    0,
+    0,
+    0,
+    1
+   ],
+   [
+    1,
+    39,
+    1,
+    0,
+    4
+   ],
+   [
+    1,
+    0,
+    40,
+    0,
+    3
+   ],
+   [
+    0,
+    0,
+    0,
+    44,
+    1
+   ],
+   [
+    1,
+    0,
+    0,
+    0,
+    37
+   ]
+  ]
+ },
+ "thresholds": null,
+ "best_epoch": 2,
+ "history": [
+  {
+   "epoch": 1,
+   "train_loss": 1.3471,
+   "val_main": 0.9032
+  },
+  {
+   "epoch": 2,
+   "train_loss": 0.277,
+   "val_main": 0.9552
+  },
+  {
+   "epoch": 3,
+   "train_loss": 0.0819,
+   "val_main": 0.9537
+  },
+  {
+   "epoch": 4,
+   "train_loss": 0.0527,
+   "val_main": 0.9552
+  },
+  {
+   "epoch": 5,
+   "train_loss": 0.0454,
+   "val_main": 0.9552
+  }
+ ],
+ "train_seconds": 58.1,
+ "latency_ms_p50": 5.3,
+ "model_mb": 95.9,
+ "task": "route",
+ "method": "finetune",
+ "base": "BAAI/bge-small-zh-v1.5",
+ "n_train": 943,
+ "n_val": 104,
+ "n_test": 220
+}

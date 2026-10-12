@@ -33,7 +33,13 @@ agent_service/
 │  ├─ prompts.py        # 系统提示词
 │  └─ render.py         # 结构化行程 → 聊天文本
 ├─ classifier/
-│  └─ llm_zero_shot.py  # 风格分类（LLM 零样本；本地微调模型上线后作兜底）
+│  ├─ labels.py         # 标签体系 + 统一输入格式（训练/推理/评测共用）
+│  ├─ model.py          # 编码器 + 线性头；Predictor 推理
+│  ├─ service.py        # 在线分类：本地模型优先，缺失时退回 LLM；路由只对聊天原话
+│  ├─ llm_zero_shot.py  # LLM 零样本分类（兜底）
+│  ├─ data/             # 生成的训练/测试集、人工盲审表
+│  ├─ results/          # 各方法评测结果 JSON
+│  └─ train/            # gen_data / train / eval_llm / reeval / review / report
 └─ tests/               # pytest 单元测试
 ```
 
@@ -137,6 +143,19 @@ cd D:\gaode_test\agent_service
 多轮修改时把上一版行程作为 `previous_itinerary` 传入，其中的地点视为已查询过。
 
 评测：`eval/run_agent_eval.py`，报告 `eval/agent_report.md`。
+
+## 意图分类
+
+```powershell
+cd D:\gaode_test\agent_service
+.\.venv-win\Scripts\python.exe -m classifier.train.gen_data                       # 生成数据（约 300 次 LLM 调用）
+.\.venv-win\Scripts\python.exe -m classifier.train.train --task style --method finetune --base hfl/chinese-roberta-wwm-ext
+.\.venv-win\Scripts\python.exe -m classifier.train.train --task route --method finetune --base hfl/chinese-roberta-wwm-ext
+.\.venv-win\Scripts\python.exe -m classifier.train.eval_llm --task style          # LLM 零样本对照
+.\.venv-win\Scripts\python.exe -m classifier.train.report                         # 汇总到 eval/classifier_report.md
+```
+
+模型写到 `agent_service/models/{task}_{模型名}/`，`config.yaml` 的 `classifier` 段指定线上使用哪个。
 
 ## 6) 测试
 

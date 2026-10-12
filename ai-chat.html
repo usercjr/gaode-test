@@ -470,6 +470,10 @@
             <option value="5">5 天</option>
           </select>
         </div>
+        <div class="input-field">
+          <label for="field-note">补充需求（可选）</label>
+          <input id="field-note" type="text" maxlength="200" placeholder="如 带爸妈，不想太累，想吃本地小吃" autocomplete="off" />
+        </div>
       </div>
 
       <div class="preference-row">
@@ -829,8 +833,10 @@
     }
 
     // 风格分类（agent_service /classify），10 秒超时，避免异常时阻塞后续行程生成
-    function callLocalClassifier(text) {
-      return postJson('/api/classify', { text }, { timeoutMs: 10000, tag: 'classify' }); // { label, score, source }
+    // 传结构化字段，由服务端按训练数据的格式拼接，保证线上输入与训练分布一致
+    function callLocalClassifier({ destination, preferences, message }) {
+      return postJson('/api/classify', { destination, preferences, message },
+        { timeoutMs: 10000, tag: 'classify' }); // { label, score, labels, source }
     }
 
     async function callLLMItinerary({ origin, destination, date, preferences, systemExtra, ragSnippets, chatHistory }) {
@@ -1106,7 +1112,8 @@
         .filter(Boolean);
 
       const days = Number(document.getElementById('field-days').value || 3);
-      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。请生成 ${days} 天行程。`;
+      const note = document.getElementById('field-note').value.trim();
+      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。${note ? `补充需求：${note}。` : ''}请生成 ${days} 天行程。`;
       appendMessage('user', planRequest);
 
       // 如果配置了 LLM，则优先请求真实模型；否则回退到本地示例
@@ -1128,9 +1135,9 @@
 
         // 先分类（如果没手动选），再用识别出的标签做 RAG 检索；任一失败不阻塞
         if (!manualModelLabels.length) {
-          const userDesc = `出发地：${origin || '未填写'}；目的地：${destination || '未填写'}；日期：${dateValue || '未填写'}；偏好：${(preferenceLabels || []).join('、') || '未选择'}`;
+
           try {
-            const cls = await callLocalClassifier(userDesc);
+            const cls = await callLocalClassifier({ destination, preferences: preferenceLabels, message: note });
             if (cls && cls.label) {
               detectedLabel = cls.label;
               const styleHead = buildSystemPromptByLabel(cls.label);
@@ -1148,7 +1155,7 @@
           try {
             const result = await runAgentPlan({
               destination, origin, days, start_date: dateValue,
-              preferences: preferenceLabels, style_prompt: systemExtra
+              preferences: preferenceLabels, style_prompt: systemExtra, message: note
             });
             state.tripContext = { origin, destination, date: dateValue, preferences, preferenceLabels, days };
             state.systemExtra = systemExtra;

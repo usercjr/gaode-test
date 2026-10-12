@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-12（P3 Agent 完成后）
+> **文档更新时间：** 2026-10-12（P4 意图分类完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -12,7 +12,7 @@
 
 两条能力链路：
 
-1. **旅行规划（Agent）**：LLM 零样本识别风格 → Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
+1. **旅行规划（Agent）**：本地微调模型识别风格（多标签，缺模型时退回 LLM）→ Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
 2. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
@@ -83,7 +83,7 @@
   - 每次调用记录用途、模型、耗时、token 用量、错误码。
 - **混合检索**（`rag/retriever.py`）：查询中识别到城市/省份时先限定到相关笔记（元数据由 `rag/enrich.py` 用 LLM 抽取），再做向量 + BM25 召回、RRF 融合、交叉编码器重排。评测见 `eval/rag_report.md`：nDCG@5 从纯向量 0.775 提升到 0.859，Recall@5 从 0.845 到 0.896（LLM 判分，待人工核验）。
 - **RAG 降级**：改写、回答任一步 LLM 失败或重排模型出错都不让请求失败，跳过的步骤写入响应的 `degraded`。
-- **分类降级**：LLM 不可用时返回默认标签 `Customized_AI_Tour`，`source: "default"`。
+- **意图分类**（`classifier/`）：微调 chinese-roberta-wwm-ext 做风格 6 类多标签与路由 5 类，CPU 单条 23~43ms；模型目录缺失时退回 LLM 零样本，LLM 也不可用时返回默认标签。训练与评测见 `eval/classifier_report.md`，模型产物在 `agent_service/models/`（不入库，用 `python -m classifier.train.train` 重新训练）。
 - **日志**：JSON 行格式，带 `request_id`，按天滚动保留 14 天，错误单独写 `logs/agent.error.log`。
 
 ### 4.3 `ai-chat.html`

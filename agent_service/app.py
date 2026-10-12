@@ -20,7 +20,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from agent.orchestrator import PlanAgent
 from agent.schemas import PlanRequest
 from agent.tools import ToolExecutor
-from classifier.llm_zero_shot import classify_style
+from classifier.labels import format_input
+from classifier.service import ClassifierService
 from config import get_settings
 from core.amap import AmapClient
 from core.errors import AppError, ErrorCode, error_body
@@ -43,6 +44,7 @@ class Services:
     rag: RagPipeline
     amap: AmapClient
     agent: PlanAgent
+    classifier: ClassifierService
 
 
 services = Services()
@@ -57,6 +59,8 @@ async def lifespan(_app: FastAPI):
     services.store = VectorStore(settings.rag)
     services.retriever = Retriever(services.store, settings.retrieval)
     services.rag = RagPipeline(services.retriever, services.llm, settings.rag.llm_model)
+    services.classifier = ClassifierService(services.llm, settings.classifier.models_dir,
+                                            settings.classifier.style_model, settings.classifier.route_model)
     services.amap = AmapClient(settings)
     services.agent = PlanAgent(
         services.llm, services.amap, ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k),
@@ -70,6 +74,7 @@ async def lifespan(_app: FastAPI):
         count = await run_in_threadpool(services.store.count)
         log.info("vector store ready", extra={"count": count})
         await run_in_threadpool(services.retriever.load)
+        await run_in_threadpool(services.classifier.load)
         if settings.retrieval.rerank == "cross_encoder":
             await run_in_threadpool(services.retriever.reranker.ensure_ready)
     except Exception:
@@ -168,7 +173,12 @@ class SearchRequest(BaseModel):
 
 
 class ClassifyRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=1000)
+    """两种用法：直接给 text；或给结构化字段，由服务端拼成与训练数据一致的格式。"""
+
+    text: str = Field("", max_length=1000)
+    destination: str = Field("", max_length=50)
+    preferences: List[str] = Field(default_factory=list, max_length=20)
+    message: str = Field("", max_length=1000)
 
 
 class ChatMessage(BaseModel):
@@ -210,6 +220,7 @@ async def readyz():
         "model": settings.llm.model,
         "breaker": breaker,
     }
+    checks["classifier"] = {"ok": True, **services.classifier.status()}  # 模型缺失时退回 LLM，不影响就绪
     checks["amap"] = {
         "ok": settings.amap_enabled,
         "configured": settings.amap_enabled,
@@ -266,7 +277,12 @@ async def search(req: SearchRequest):
 
 @app.post("/classify")
 async def classify(req: ClassifyRequest):
-    return await classify_style(services.llm, req.text.strip())
+    # text 表示聊天原话（同时做路由）；结构化字段表示规划表单（只做风格识别）
+    is_chat = bool(req.text.strip())
+    text = req.text.strip() if is_chat else format_input(req.destination, req.preferences, req.message)
+    if not text:
+        raise AppError(ErrorCode.BAD_REQUEST, "text 或 destination/preferences/message 至少提供一项")
+    return await services.classifier.classify(text, with_route=is_chat)
 
 
 @app.post("/itinerary")
