@@ -1,103 +1,186 @@
-// 简易静态服务 + 本地分类代理 + LLM 代理（OpenAI 兼容 /chat/completions）
-// 运行：
-//   推荐：在项目根目录创建 .env 后直接 npm start / node server.js
+// Node 网关：静态页面托管 + request-id + 统一错误格式 + 高德代理 + agent_service 转发
+// 运行：在项目根目录配置 .env 后 npm start
+// 所有 LLM 调用都在 agent_service（Python）中完成，网关不持有 LLM 密钥。
 
 import 'dotenv/config';
 import express from 'express';
 import fetch from 'node-fetch';
 import cors from 'cors';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const app = express();
+// ---------------- 配置（启动时校验） ----------------
+const config = {
+  port: Number(process.env.PORT || 3000),
+  agentBase: (process.env.AGENT_BASE || process.env.RAG_BASE || 'http://127.0.0.1:8002').replace(/\/+$/, ''),
+  amapKey: (process.env.AMAP_WEB_SERVICE_KEY || '').trim(),
+  // 各下游超时（毫秒）。行程生成包含 LLM 重试，给得最长
+  timeouts: { agentDefault: 30000, agentLong: 180000, amap: 8000 }
+};
 
-// 开发期：同源访问无需 CORS，但保留以便你从其它端口打开
-app.use(cors());
-app.use(express.json({ limit: '1mb' }));
-
-// 轻量日志，便于你在控制台定位
-app.use((req, _res, next) => {
-  if (req.path.startsWith('/api/')) {
-    console.log(`[api] ${req.method} ${req.path}`);
+function validateConfig() {
+  const problems = [];
+  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) problems.push(`PORT 非法：${process.env.PORT}`);
+  try { new URL(config.agentBase); } catch { problems.push(`AGENT_BASE 不是合法 URL：${config.agentBase}`); }
+  if (problems.length) {
+    problems.forEach(p => log('error', 'config invalid', { problem: p }));
+    process.exit(1);
   }
+  if (!config.amapKey) log('warn', 'AMAP_WEB_SERVICE_KEY 未设置，地图 POI/路线功能将不可用');
+}
+
+// ---------------- 结构化日志（JSON 行） ----------------
+function log(level, msg, fields = {}) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level, logger: 'gateway', msg, ...fields });
+  (level === 'error' || level === 'warn' ? console.error : console.log)(line);
+}
+
+// ---------------- 统一错误格式（与 agent_service/core/errors.py 保持一致） ----------------
+const ERRORS = {
+  BAD_REQUEST: [400, false, '请求参数有误'],
+  NOT_FOUND: [404, false, '资源不存在'],
+  UPSTREAM_AMAP_ERROR: [502, true, '地图服务暂时不可用'],
+  AGENT_UNAVAILABLE: [503, true, '智能服务未启动或暂时不可用'],
+  GATEWAY_TIMEOUT: [504, true, '请求处理超时，请稍后重试'],
+  INTERNAL: [500, false, '服务内部错误']
+};
+
+function sendError(res, code, message) {
+  const [status, retryable, defaultMessage] = ERRORS[code] || ERRORS.INTERNAL;
+  res.status(status).json({
+    error: { code, message: message || defaultMessage, retryable, request_id: res.locals.requestId }
+  });
+}
+
+// ---------------- app ----------------
+const app = express();
+app.disable('x-powered-by');
+app.use(cors());
+
+// request-id + 访问日志（放在 body 解析之前，解析失败的请求也能带上 request-id）
+app.use((req, res, next) => {
+  const incoming = String(req.get('x-request-id') || '');
+  const requestId = /^[A-Za-z0-9-]{8,64}$/.test(incoming) ? incoming : crypto.randomUUID().replace(/-/g, '');
+  res.locals.requestId = requestId;
+  res.set('X-Request-ID', requestId);
+  const started = process.hrtime.bigint();
+  res.on('finish', () => {
+    if (!req.path.startsWith('/api/')) return;
+    log(res.statusCode >= 500 ? 'warn' : 'info', 'access', {
+      request_id: requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      latency_ms: Number((process.hrtime.bigint() - started) / 1000000n)
+    });
+  });
   next();
 });
+app.use(express.json({ limit: '1mb' }));
 
-// 静态资源服务（直接访问 http://127.0.0.1:3000/ai-chat.html）
-app.use(express.static(__dirname));
+// 静态资源：只开放页面与前端脚本，不能把整个项目目录（配置、数据、日志、源码）暴露出去
+const PAGES = ['ai-chat.html', 'output-map.html', 'rag-search.html'];
+app.use('/src', express.static(path.join(__dirname, 'src')));
+app.get('/', (_req, res) => res.redirect('/ai-chat.html'));
+for (const page of PAGES) {
+  app.get(`/${page}`, (_req, res) => res.sendFile(path.join(__dirname, page)));
+}
 
-// 你的百度 API Key 仅保存在服务器环境变量中
-// 清洗可能的换行/引号，避免 "Invalid character in header content"
-const API_KEY = (process.env.BAIDU_API_KEY || '')
-  .replace(/[\r\n]/g, '')
-  .trim()
-  .replace(/^['"]|['"]$/g, '');
-// OpenAI 兼容入口（百度 AI Studio 的 Chat Completions 路径）
-// 可用环境变量覆盖：
-//   BAIDU_BASE_URL    默认 https://aistudio.baidu.com/llm/lmapi
-//   BAIDU_API_VERSION 默认 v1（如需 v3 可设为 v3）
-const BAIDU_BASE_URL = (process.env.BAIDU_BASE_URL || 'https://aistudio.baidu.com/llm/lmapi').replace(/\/+$/,'');
-const BAIDU_API_VERSION = (process.env.BAIDU_API_VERSION || 'v1').trim();
-const REMOTE_ENDPOINT = `${BAIDU_BASE_URL}/${BAIDU_API_VERSION}/chat/completions`;
-
-// 默认模型（可选），如果前端未传 model，则使用该值
-const DEFAULT_MODEL = (process.env.BAIDU_MODEL || '').trim();
-
-// 本地 Python 分类服务基址（FastAPI），可通过环境变量覆盖
-const PY_BASE = process.env.PY_CLASSIFY_BASE || 'http://127.0.0.1:8001';
-
-// 处理可能的预检请求
-app.options('/api/classify', (_req, res) => res.sendStatus(204));
-app.options('/api/itinerary', (_req, res) => res.sendStatus(204));
-
-// 将前端的分类请求代理到本地 Python 服务
-app.post('/api/classify', async (req, res) => {
+// fetch + 超时
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    console.log('[api] /api/classify body:', req.body);
-    const r = await fetch(`${PY_BASE}/classify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body || {})
-    });
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 转发到 agent_service：透传状态码与响应体（其错误体已是统一格式），只处理网络层失败
+function proxyToAgent(agentPath, timeoutMs = config.timeouts.agentDefault) {
+  return async (req, res) => {
+    try {
+      const r = await fetchWithTimeout(`${config.agentBase}${agentPath}`, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json', 'X-Request-ID': res.locals.requestId },
+        body: req.method === 'GET' ? undefined : JSON.stringify(req.body || {})
+      }, timeoutMs);
+      res.status(r.status).type('application/json').send(await r.text());
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        log('warn', 'agent timeout', { request_id: res.locals.requestId, path: agentPath, timeout_ms: timeoutMs });
+        return sendError(res, 'GATEWAY_TIMEOUT');
+      }
+      log('error', 'agent unreachable', { request_id: res.locals.requestId, path: agentPath, error: String(e) });
+      sendError(res, 'AGENT_UNAVAILABLE');
+    }
+  };
+}
+
+app.post('/api/classify', proxyToAgent('/classify'));
+app.post('/api/itinerary', proxyToAgent('/itinerary', config.timeouts.agentLong));
+app.post('/api/rag/search', proxyToAgent('/search', config.timeouts.agentLong));
+app.post('/api/rag/retrieve', proxyToAgent('/retrieve'));
+// 注：RAG 入库（/ingest/csv）不经网关暴露，请在本机用 agent_service/ingest_csv.py
+
+// 就绪检查：网关自身 + agent_service 依赖状态
+app.get('/api/readyz', async (_req, res) => {
+  const gateway = { ok: true, amap_configured: Boolean(config.amapKey) };
+  try {
+    const r = await fetchWithTimeout(`${config.agentBase}/readyz`, {}, 5000);
+    const agent = await r.json();
+    res.status(r.ok ? 200 : 503).json({ ready: r.ok, gateway, agent });
+  } catch (e) {
+    res.status(503).json({ ready: false, gateway, agent: { ready: false, error: String(e) } });
+  }
+});
+
+// 高德 Web 服务代理：只放行地图页用到的接口，Key 由服务端追加
+const AMAP_ENDPOINTS = {
+  'place-text': 'https://restapi.amap.com/v3/place/text',
+  'geocode': 'https://restapi.amap.com/v3/geocode/geo',
+  'driving': 'https://restapi.amap.com/v3/direction/driving',
+  'walking': 'https://restapi.amap.com/v3/direction/walking'
+};
+
+app.get('/api/amap/:service', async (req, res) => {
+  const base = AMAP_ENDPOINTS[req.params.service];
+  if (!base) return sendError(res, 'NOT_FOUND', '未知的地图接口');
+  if (!config.amapKey) return sendError(res, 'UPSTREAM_AMAP_ERROR', '地图服务未配置');
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.query)) {
+    if (k !== 'key' && typeof v === 'string') params.set(k, v);
+  }
+  params.set('key', config.amapKey);
+  try {
+    const r = await fetchWithTimeout(`${base}?${params.toString()}`, {}, config.timeouts.amap);
     const text = await r.text();
+    // 高德业务错误以 HTTP 200 + status:"0" 返回，记录下来便于排查配额问题
+    if (text.includes('"status":"0"')) {
+      log('warn', 'amap business error', { request_id: res.locals.requestId, service: req.params.service, body: text.slice(0, 200) });
+    }
     res.status(r.status).type('application/json').send(text);
   } catch (e) {
-    console.error('Classify proxy error:', e);
-    res.status(500).json({ error: 'classify_proxy_failed', message: String(e) });
+    log('error', 'amap request failed', { request_id: res.locals.requestId, service: req.params.service, error: String(e) });
+    sendError(res, e.name === 'AbortError' ? 'GATEWAY_TIMEOUT' : 'UPSTREAM_AMAP_ERROR');
   }
 });
 
-app.post('/api/itinerary', async (req, res) => {
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'missing_api_key', message: '请设置环境变量 BAIDU_API_KEY' });
-  }
-  try {
-    const body = req.body || {};
-    if (!body.model && DEFAULT_MODEL) body.model = DEFAULT_MODEL;
-    console.log('[api] /api/itinerary endpoint:', REMOTE_ENDPOINT);
-    console.log('[api] /api/itinerary body keys:', Object.keys(body || {}));
-    const resp = await fetch(REMOTE_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-    const text = await resp.text();
-    res.status(resp.status).type('application/json').send(text);
-  } catch (e) {
-    console.error('Proxy error:', e);
-    res.status(500).json({ error: 'proxy_failed', message: String(e) });
-  }
+// 未匹配的 /api 路由
+app.use('/api', (_req, res) => sendError(res, 'NOT_FOUND'));
+
+// 兜底错误处理（如请求体 JSON 解析失败）
+app.use((err, _req, res, _next) => {
+  if (err.type === 'entity.parse.failed') return sendError(res, 'BAD_REQUEST', '请求体不是合法 JSON');
+  log('error', 'unhandled error', { request_id: res.locals.requestId, error: String(err), stack: err.stack });
+  sendError(res, 'INTERNAL');
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Static + proxy server running at http://127.0.0.1:${PORT}`);
+validateConfig();
+app.listen(config.port, () => {
+  log('info', 'gateway started', { url: `http://127.0.0.1:${config.port}`, agent_base: config.agentBase });
 });
-
-

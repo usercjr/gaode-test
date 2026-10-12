@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WanderAI RAG 搜索</title>
+  <style>
+    body { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 20px; background:#f6f8fb; color:#0f172a; }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:16px; margin-bottom:14px; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .muted { color:#64748b; font-size:13px; margin-bottom: 12px; }
+    textarea { width:100%; min-height:92px; border:1px solid #cbd5e1; border-radius:10px; padding:10px; font-size:14px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+    input[type="number"] { width:110px; border:1px solid #cbd5e1; border-radius:8px; padding:8px; }
+    button { border:none; background:#2563eb; color:#fff; padding:10px 16px; border-radius:10px; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#0b1220; color:#e2e8f0; border-radius:10px; padding:12px; }
+    .hit { border-top:1px dashed #cbd5e1; padding-top:10px; margin-top:10px; }
+    .tag { display:inline-block; background:#eef2ff; color:#1e3a8a; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>RAG 简单 AI 搜索</h1>
+      <div class="muted">调用链路：意图理解 → 向量召回 → LLM 重排 → 生成答案</div>
+      <textarea id="q" placeholder="例如：天津两日游里，适合拍照且预算不高的路线建议"></textarea>
+      <div class="row">
+        <label>top_k <input id="topK" type="number" min="1" max="20" value="5" /></label>
+        <label>rerank_k <input id="rerankK" type="number" min="3" max="40" value="10" /></label>
+        <button id="searchBtn">搜索</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div><span class="tag">意图</span><span id="intentText">-</span></div>
+      <div style="margin-top:8px;"><span class="tag">改写查询</span><span id="rewriteText">-</span></div>
+      <div style="margin-top:8px;"><span class="tag">召回数量</span><span id="recallText">-</span></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">答案</h3>
+      <pre id="answer">请先发起搜索</pre>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">召回片段</h3>
+      <div id="hits">暂无</div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    const btn = document.getElementById('searchBtn');
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderHits(hits) {
+      const el = document.getElementById('hits');
+      if (!Array.isArray(hits) || !hits.length) {
+        el.textContent = '无命中';
+        return;
+      }
+      // 标题和正文都来自知识库数据，统一转义后再拼 HTML
+      el.innerHTML = hits.map(h => `
+        <div class="hit">
+          <div><strong>#${escapeHtml(h.rank)}</strong> ${escapeHtml(h.title || '无标题')} | similarity: ${escapeHtml(h.similarity ?? 'NA')}</div>
+          <div style="color:#334155; margin-top:6px;">${escapeHtml(h.text)}</div>
+        </div>
+      `).join('');
+    }
+
+    async function doSearch() {
+      const query = document.getElementById('q').value.trim();
+      const top_k = Number(document.getElementById('topK').value || 5);
+      const rerank_k = Number(document.getElementById('rerankK').value || 10);
+      if (!query) return;
+      btn.disabled = true;
+      btn.textContent = '搜索中...';
+      try {
+        const resp = await fetch(`${API_BASE}/api/rag/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, top_k, rerank_k })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          const err = data.error || {};
+          const rid = err.request_id ? `（请求ID ${err.request_id.slice(0, 8)}）` : '';
+          throw new Error(`${err.message || resp.status}${rid}`);
+        }
+        document.getElementById('intentText').textContent = data.intent?.intent || '-';
+        document.getElementById('rewriteText').textContent = data.intent?.query_rewrite || '-';
+        document.getElementById('recallText').textContent = `${data.recalled_count ?? '-'}`;
+        // degraded 列出被跳过的 LLM 步骤（改写/重排/回答），结果仍可用但质量可能下降
+        const degradedNote = data.degraded?.length ? `\n\n（部分步骤已降级：${data.degraded.join('、')}）` : '';
+        document.getElementById('answer').textContent = (data.answer || '无答案') + degradedNote;
+        renderHits(data.hits || []);
+      } catch (e) {
+        document.getElementById('answer').textContent = '请求失败: ' + (e.message || e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '搜索';
+      }
+    }
+
+    btn.addEventListener('click', doSearch);
+    document.getElementById('q').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSearch();
+    });
+  </script>
+</body>
+</html>

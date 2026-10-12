@@ -1,0 +1,26 @@
+# agent_service 非敏感配置（可提交）。密钥放 .env，临时覆盖用环境变量，如 LLM__MODEL=xxx。
+
+llm:
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  timeout_s: 60
+  max_concurrency: 8          # 同时进行的 LLM 调用上限
+  retry_attempts: 3           # 含首次调用；仅对超时/429/5xx 重试
+  breaker_failure_threshold: 5
+  breaker_recovery_s: 30
+
+rag:
+  db_dir: agent_service/chroma_db   # 相对项目根目录
+  collection: travel_notes
+  embedding_model: BAAI/bge-small-zh-v1.5
+  llm_model: ""                     # 为空则使用 llm.model
+  data_dir: data                    # /ingest/csv 只允许读取该目录
+
+server:
+  host: 127.0.0.1
+  port: 8002
+
+logging:
+  level: INFO
+  dir: logs
+  retention_days: 14
