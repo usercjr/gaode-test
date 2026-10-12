@@ -78,6 +78,9 @@ class ClassifierConfig(BaseModel):
     models_dir: Path = Path("agent_service/models")
     style_model: str = "style_chinese-roberta-wwm-ext"  # 目录不存在时自动退回 LLM 零样本
     route_model: str = "route_chinese-roberta-wwm-ext"
+    # 本地路由最高概率低于该值时交给 LLM。在人工编写的 dev 集上选定（eval/route_threshold_report.md）；
+    # 设为 1.01 即全部交给 LLM，设为 0 即全部用本地模型
+    route_confidence: float = Field(0.97, ge=0.0, le=1.01)
 
 
 class ServerConfig(BaseModel):

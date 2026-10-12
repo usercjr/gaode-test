@@ -57,3 +57,15 @@ class PlanRequest(BaseModel):
     style_prompt: str = Field("", max_length=2000, description="前端风格标签对应的写作要求")
     message: str = Field("", max_length=2000, description="用户的补充需求或多轮修改意见")
     previous_itinerary: Optional[Itinerary] = None
+
+
+class ChatRequest(BaseModel):
+    """聊天框消息：先路由，再交给对应的处理流程。行程上下文用于补全指代（“附近”“第二天”）。"""
+
+    message: str = Field(..., min_length=1, max_length=1000)
+    destination: str = Field("", max_length=50)
+    days: Optional[int] = Field(None, ge=1, le=10)
+    start_date: str = Field("", max_length=20)
+    preferences: List[str] = Field(default_factory=list, max_length=20)
+    style_prompt: str = Field("", max_length=2000)
+    previous_itinerary: Optional[Itinerary] = None

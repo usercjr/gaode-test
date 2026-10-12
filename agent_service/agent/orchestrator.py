@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from agent.prompts import build_system_prompt, build_user_prompt
 from agent.render import render_text
 from agent.schemas import PlanRequest
-from agent.tools import SUBMIT_TOOL, TOOL_DEFS, PlanContext, ToolExecutor
+from agent.tools import PLAN_TOOLS, SUBMIT_TOOL, PlanContext, ToolExecutor, tool_defs
 from agent.validator import ItineraryValidator, ValidationResult
 from config import AgentConfig
 from core.amap import AmapClient
@@ -99,7 +99,7 @@ class PlanAgent:
             if force_submit:
                 messages.append({"role": "user", "content": "信息已经足够，请立即调用 submit_itinerary 提交行程。"})
             resp = await self.llm.complete(
-                messages, tools=TOOL_DEFS, temperature=self.cfg.temperature, purpose="agent.plan",
+                messages, tools=tool_defs(PLAN_TOOLS), temperature=self.cfg.temperature, purpose="agent.plan",
                 tool_choice={"type": "function", "function": {"name": SUBMIT_TOOL}} if force_submit else None,
             )
             usage = resp["usage"]

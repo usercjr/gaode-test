@@ -40,6 +40,8 @@ class LLMClient:
         self._endpoint = f"{self._cfg.base_url}/chat/completions"
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._cfg.timeout_s, connect=10.0))
         self._gate = asyncio.Semaphore(self._cfg.max_concurrency)
+        # 进程内累计用量（评测时取前后差值即可得到单次请求的 token 消耗）
+        self.usage_total = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
         self.breaker = CircuitBreaker(
             "llm",
             failure_threshold=self._cfg.breaker_failure_threshold,
@@ -156,6 +158,10 @@ class LLMClient:
             "latency_ms": round((time.perf_counter() - started) * 1000),
             "ok": code is None,
         }
+        if code is None:
+            self.usage_total["calls"] += 1
+            self.usage_total["prompt_tokens"] += int((usage or {}).get("prompt_tokens") or 0)
+            self.usage_total["completion_tokens"] += int((usage or {}).get("completion_tokens") or 0)
         if usage:
             fields["prompt_tokens"] = usage.get("prompt_tokens")
             fields["completion_tokens"] = usage.get("completion_tokens")

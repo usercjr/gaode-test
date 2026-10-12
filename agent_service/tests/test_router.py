@@ -1,0 +1,103 @@
+"""动态路由单元测试：用假的分类器 / RAG / Agent / LLM 验证分发逻辑。"""
+import asyncio
+
+from agent.router import ChatRouter
+from agent.schemas import ChatRequest, Itinerary
+from agent.tools import ToolExecutor
+from tests.test_agent import FakeAmap
+
+
+class FakeClassifier:
+    def __init__(self, route, score=0.95):
+        self._r = None if route is None else {"route": route, "score": score}
+
+    async def predict_route(self, text):
+        return self._r
+
+
+class FakeLLM:
+    def __init__(self):
+        self.purposes = []
+
+    async def chat(self, messages, **kw):
+        self.purposes.append(kw.get("purpose"))
+        if kw.get("purpose") == "route.llm":
+            return '{"label": "realtime"}'
+        return "不客气～"
+
+    async def complete(self, messages, **kw):
+        self.purposes.append(kw.get("purpose"))
+        return {"message": {"content": "宽窄巷子附近推荐：A、B、C"}, "usage": {}}
+
+
+class FakeRag:
+    def __init__(self):
+        self.queries = []
+
+    async def search(self, query, top_k=5, rerank_k=10):
+        self.queries.append(query)
+        return {"answer": "要提前预约 [1]", "hits": [{"title": "t"}], "degraded": []}
+
+
+class FakePlanResult:
+    text = "第1天 ..."
+
+    def to_dict(self):
+        return {"itinerary": {}, "text": self.text}
+
+
+class FakeAgent:
+    def __init__(self):
+        self.requests = []
+
+    async def plan(self, req, emit=None):
+        self.requests.append(req)
+        return FakePlanResult()
+
+
+PREV = Itinerary.model_validate({"title": "成都", "city": "成都", "days": [
+    {"day": 1, "stops": [{"name": "宽窄巷子", "poi_id": "P1", "location": {"lng": 104.05, "lat": 30.67}}]}]})
+
+
+def _router(route):
+    llm, rag, agent, amap = FakeLLM(), FakeRag(), FakeAgent(), FakeAmap()
+    router = ChatRouter(FakeClassifier(route), llm, rag, agent, ToolExecutor(amap, retriever=None), amap)
+    return router, llm, rag, agent
+
+
+def test_notes_qa_goes_to_rag_and_keeps_itinerary():
+    router, llm, rag, agent = _router("notes_qa")
+    out = asyncio.run(router.handle(ChatRequest(message="要注意什么", previous_itinerary=PREV)))
+    assert out["route"] == "notes_qa" and "plan" not in out
+    assert rag.queries == ["成都 要注意什么"]  # 用行程城市补全检索词
+    assert agent.requests == []
+
+
+def test_plan_route_revises_previous_itinerary():
+    router, _, _, agent = _router("plan")
+    out = asyncio.run(router.handle(ChatRequest(message="第二天轻松点", previous_itinerary=PREV)))
+    assert out["plan"] and agent.requests[0].previous_itinerary is PREV
+    assert agent.requests[0].destination == "成都"
+
+
+def test_plan_without_destination_asks_for_it():
+    router, _, _, agent = _router("plan")
+    out = asyncio.run(router.handle(ChatRequest(message="帮我排个行程")))
+    assert "目的地" in out["answer"] and agent.requests == []
+
+
+def test_chitchat_and_llm_fallback_routing():
+    router, llm, _, _ = _router("chitchat")
+    assert asyncio.run(router.handle(ChatRequest(message="谢谢")))["answer"] == "不客气～"
+
+    router, llm, _, _ = _router(None)  # 本地路由不可用 → LLM 判定为 realtime
+    out = asyncio.run(router.handle(ChatRequest(message="明天下雨吗", destination="成都")))
+    assert out["route"] == "realtime" and out["route_source"] == "llm"
+    assert "chat.tool_qa" in llm.purposes
+
+
+def test_spatial_question_uses_tool_qa_with_itinerary_pois():
+    router, llm, _, _ = _router("graph_qa")
+    out = asyncio.run(router.handle(ChatRequest(message="宽窄巷子附近有什么吃的", previous_itinerary=PREV)))
+    assert out["route"] == "graph_qa" and "推荐" in out["answer"]
+    assert llm.purposes == ["chat.tool_qa"]

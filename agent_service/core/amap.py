@@ -173,6 +173,30 @@ class AmapClient:
             )
         return pois[:limit]
 
+    async def search_around(self, center: Dict[str, float], keywords: str = "", types: str = "",
+                            radius: int = 1000, limit: int = 8) -> List[Dict[str, Any]]:
+        """周边搜索：以坐标为中心按关键词/类型找 POI，结果按距离排序，带 distance_m。"""
+        data = await self._get(
+            "/v3/place/around",
+            {"location": f"{center['lng']:.6f},{center['lat']:.6f}", "keywords": keywords, "types": types,
+             "radius": max(100, min(radius, 5000)), "sortrule": "distance",
+             "offset": max(1, min(limit, 20)), "page": 1, "extensions": "all"},
+        )
+        out = []
+        for p in data.get("pois") or []:
+            loc = parse_location(p.get("location"))
+            if not loc:
+                continue
+            biz = p.get("biz_ext") or {}
+            out.append({
+                "poi_id": p.get("id"), "name": p.get("name"), "type": _str(p.get("type")),
+                "address": _str(p.get("address")), "city": _str(p.get("cityname")),
+                "district": _str(p.get("adname")), "adcode": _str(p.get("adcode")), "location": loc,
+                "distance_m": int(float(p.get("distance") or 0)),
+                "rating": _str(biz.get("rating")), "cost": _str(biz.get("cost")),
+            })
+        return out[:limit]
+
     async def geocode(self, address: str, city: str = "") -> Optional[Dict[str, Any]]:
         data = await self._get("/v3/geocode/geo", {"address": address, "city": city})
         geos = data.get("geocodes") or []

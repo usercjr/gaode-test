@@ -15,14 +15,15 @@ from core.logging import get_logger
 
 log = get_logger("classifier")
 
-# 本地路由模型最高概率低于该值时返回 route=None，交给 LLM 判断（P5 动态路由使用）。
-# 级联阈值在验证集上选择，结果是“全部用本地模型”最优（eval/classifier_report.md），所以默认 0。
-ROUTE_CONFIDENCE = 0.0
 
 
 class ClassifierService:
-    def __init__(self, llm: LLMClient, models_dir: Path, style_model: str, route_model: str):
+    def __init__(self, llm: LLMClient, models_dir: Path, style_model: str, route_model: str,
+                 route_confidence: float = 0.97):
         self.llm = llm
+        # 本地路由最高概率低于该值时交给 LLM。P4 的 LLM 生成验证集上选出的是 0（全部本地），
+        # 但在人工编写的消息上本地模型明显变差（held-out 75%），阈值改在人工 dev 集上选
+        self.route_confidence = route_confidence
         self.style: Optional[Predictor] = None
         self.route: Optional[Predictor] = None
         self._dirs = (models_dir / style_model, models_dir / route_model)
@@ -56,9 +57,16 @@ class ClassifierService:
         }
         if with_route and self.route is not None:
             r = await run_in_threadpool(self.route.predict, text)
-            result["route"] = r["label"] if r["score"] >= ROUTE_CONFIDENCE else None
+            result["route"] = r["label"] if r["score"] >= self.route_confidence else None
             result["route_score"] = r["score"]
         return result
+
+    async def predict_route(self, text: str) -> Optional[Dict[str, object]]:
+        """只做路由（聊天原话）。模型缺失或置信度不足时返回 None，由调用方交给 LLM。"""
+        if self.route is None:
+            return None
+        r = await run_in_threadpool(self.route.predict, text)
+        return {"route": r["label"], "score": r["score"]} if r["score"] >= self.route_confidence else None
 
     def status(self) -> Dict[str, object]:
         return {"style_model": bool(self.style), "route_model": bool(self.route),

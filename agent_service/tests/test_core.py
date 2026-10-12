@@ -171,3 +171,23 @@ def test_extract_json_handles_wrapped_text():
         "score": 0.9,
     }
     assert extract_json("no json") is None
+
+
+def test_log_rollover_survives_file_in_use(tmp_path, monkeypatch):
+    """Windows 上其他进程占用日志文件时轮转失败，应继续写当前文件而不是每条日志都报错。"""
+    import logging
+    import time as _time
+
+    from core.logging import SafeTimedRotatingFileHandler
+
+    handler = SafeTimedRotatingFileHandler(tmp_path / "x.log", when="midnight", encoding="utf-8")
+
+    def locked(src, dst):
+        raise PermissionError(32, "file in use")
+
+    monkeypatch.setattr(handler, "rotate", locked)
+    handler.doRollover()
+    assert handler.rolloverAt > _time.time()  # 推迟到下一个周期再试
+    handler.emit(logging.LogRecord("t", logging.INFO, "", 0, "still writing", None, None))
+    handler.close()
+    assert "still writing" in (tmp_path / "x.log").read_text(encoding="utf-8")

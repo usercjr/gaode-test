@@ -27,6 +27,8 @@ agent_service/
 │  └─ pipeline.py       # 意图改写 → 混合检索 → 引用回答（逐级降级）
 ├─ agent/
 │  ├─ orchestrator.py   # Function Calling 循环 + 校验自纠
+│  ├─ router.py         # 动态路由：聊天消息按意图分发到规划 / RAG / 工具问答 / 闲聊
+│  ├─ qa.py             # 轻量工具问答（周边、顺路、天气、交通时长），不产出行程
 │  ├─ tools.py          # 工具定义与执行（笔记检索、POI、路线、天气、提交行程）
 │  ├─ validator.py      # 规则校验：POI 真实性、城市一致、路段/每日时长，路线时长用高德实算覆盖
 │  ├─ schemas.py        # 结构化行程（Pydantic）
@@ -116,6 +118,8 @@ cd D:\gaode_test\agent_service
 | POST | `/classify` | 风格分类 `{text}` → `{label, score, source}` |
 | POST | `/plan` | Agent 规划 `{destination, days, preferences, style_prompt, message, previous_itinerary}` → 结构化行程 + 文本 + 校验统计 |
 | POST | `/plan/stream` | 同上，SSE 推送 `status` / `tool_call` / `validation` 进度，最后 `done` 或 `error` |
+| POST | `/chat` | 聊天消息：先路由（plan / notes_qa / graph_qa / realtime / chitchat）再处理 `{message, destination, previous_itinerary, ...}` |
+| POST | `/chat/stream` | 同上，SSE 推送 `route` / `tool_call` / `status` 事件 |
 | POST | `/itinerary` | 文本行程生成（旧流程，Agent 不可用时前端回退使用）`{messages, temperature}` → `{text, model}` |
 | POST | `/ingest/csv` | 入库（仅本机，`csv_path` 必须位于 `data/` 内；不经网关暴露） |
 
@@ -143,6 +147,18 @@ cd D:\gaode_test\agent_service
 多轮修改时把上一版行程作为 `previous_itinerary` 传入，其中的地点视为已查询过。
 
 评测：`eval/run_agent_eval.py`，报告 `eval/agent_report.md`。
+
+## 动态路由
+
+| 路由 | 处理 | 工具 |
+|---|---|---|
+| plan | PlanAgent，在上一版行程上修改 | 规划工具集 |
+| notes_qa | RAG 问答（混合检索 + 重排 + 引用回答），检索词自动补上行程城市 | — |
+| graph_qa | 工具问答（最多 4 轮） | poi_search / nearby_search / route_plan / search_notes |
+| realtime | 工具问答（最多 4 轮） | get_weather / poi_search / route_plan |
+| chitchat | 直接简短回复 | — |
+
+路由由本地 RoBERTa 路由模型判定，模型缺失时退回 LLM 零样本。评测：`eval/run_router_eval.py`，报告 `eval/router_report.md`。
 
 ## 意图分类
 

@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-12（P4 意图分类完成后）
+> **文档更新时间：** 2026-10-13（P5 动态路由完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -13,7 +13,8 @@
 两条能力链路：
 
 1. **旅行规划（Agent）**：本地微调模型识别风格（多标签，缺模型时退回 LLM）→ Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
-2. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
+2. **聊天（动态路由）**：聊天框消息先由路由模型判断类型——修改行程才交给 Agent，经验问答走 RAG，“附近 / 顺不顺路”走周边搜索与路线工具，天气与交通时长走实时工具，闲聊直接回复；只有“修改行程”会改动行程。
+3. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
 
@@ -65,7 +66,7 @@
 
 - **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。
 - **request-id**：沿用前端/调用方传入的 `X-Request-ID`，否则生成；透传给 `agent_service` 并写入响应头。
-- **转发**：`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
+- **转发**：`/api/chat`、`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream`、`/api/chat/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
 - **高德代理**：`GET /api/amap/{place-text|geocode|driving|walking}`，白名单接口，服务端追加 Key；高德业务错误（`status:"0"`）会记录日志。
 - **就绪检查**：`GET /api/readyz` 汇总网关与 `agent_service` 的依赖状态。
 - **启动校验**：端口、`AGENT_BASE` 非法时直接退出；未配置高德 Key 时告警。

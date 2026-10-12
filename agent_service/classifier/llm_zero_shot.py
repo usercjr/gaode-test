@@ -1,6 +1,7 @@
 """旅行风格分类：LLM 零样本版本（本地微调模型上线前的默认实现，之后作为兜底）。"""
 from typing import Dict
 
+from classifier.labels import ROUTE_DESC, ROUTE_LABELS
 from core.errors import AppError
 from core.llm import LLMClient
 from core.logging import get_logger
@@ -44,3 +45,16 @@ async def classify_style(llm: LLMClient, text: str) -> Dict[str, object]:
     except (TypeError, ValueError):
         score = 0.5
     return {"label": label, "score": score, "source": "llm"}
+
+
+async def classify_route(llm: LLMClient, text: str) -> Dict[str, object]:
+    """路由的 LLM 零样本兜底（本地路由模型缺失或不确定时使用）；失败时按“经验问答”处理。"""
+    defs = "\n".join(f"- {k}：{v}" for k, v in ROUTE_DESC.items())
+    prompt = f"判断用户消息属于哪一类，只选一个。\n类别定义：\n{defs}\n只返回 JSON：{{\"label\": \"类别英文名\"}}\n消息：{text}"
+    try:
+        raw = await llm.chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=30,
+                             purpose="route.llm")
+    except AppError:
+        return {"route": "notes_qa", "source": "default"}
+    label = (extract_json(raw) or {}).get("label")
+    return {"route": label if label in ROUTE_LABELS else "notes_qa", "source": "llm"}

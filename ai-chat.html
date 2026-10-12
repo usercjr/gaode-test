@@ -863,8 +863,8 @@
     const USE_AGENT = true;
 
     // 读取 SSE：逐个解析 "event: x\ndata: {...}\n\n"
-    async function callAgentStream(body, onEvent) {
-      const resp = await fetch(`${API_BASE}/api/plan/stream`, {
+    async function callAgentStream(body, onEvent, path = '/api/plan/stream') {
+      const resp = await fetch(`${API_BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -915,8 +915,9 @@
       wrapper.appendChild(meta);
       wrapper.appendChild(bubble);
       chatLogEl.appendChild(wrapper);
-      const counts = { search_notes: 0, poi_search: 0, route_plan: 0, get_weather: 0 };
-      const labels = { search_notes: '📚 检索笔记', poi_search: '📍 查询地点', route_plan: '🧭 计算路线', get_weather: '🌤️ 查天气' };
+      const counts = { search_notes: 0, poi_search: 0, nearby_search: 0, route_plan: 0, get_weather: 0 };
+      const labels = { search_notes: '📚 检索笔记', poi_search: '📍 查询地点', nearby_search: '🔎 周边搜索',
+        route_plan: '🧭 计算路线', get_weather: '🌤️ 查天气' };
       let stage = '准备中';
       let latest = '';
       const render = () => {
@@ -927,6 +928,7 @@
       render();
       return (event, data) => {
         if (event === 'status') stage = data.message;
+        if (event === 'route') stage = `🔀 识别为：${data.route_cn}`;
         if (event === 'tool_call') {
           counts[data.tool] = (counts[data.tool] || 0) + 1;
           if (data.brief) latest = `${labels[data.tool] || data.tool} ${data.brief}`;
@@ -962,6 +964,12 @@
     async function runAgentPlan(body) {
       const onEvent = createProgressBubble();
       const result = await callAgentStream(body, onEvent);
+      applyAgentPlan(result);
+      return result;
+    }
+
+    // 把 Agent 规划结果写入状态与本地存储（首轮规划与聊天中的 plan 路由共用）
+    function applyAgentPlan(result) {
       state.agentItinerary = result.itinerary;
       state.itineraryText = result.text;
       state.itineraryJson = agentItineraryToMapJson(result.itinerary);
@@ -975,6 +983,23 @@
       const summary = `地点 ${v.stops_resolved}/${v.stops} 已匹配真实 POI · 路线 ${v.legs_verified}/${v.legs} 段经高德实算`
         + (result.passed ? '' : ' · ⚠️ 部分问题未能自动修正');
       appendMessage('system', `${summary}（${(result.latency_ms / 1000).toFixed(0)} 秒）`);
+      setMapButtonsEnabled(true);
+    }
+
+    // 聊天消息：服务端先路由，只有“规划/修改行程”才会改动行程，其余直接回答
+    async function runChat(text) {
+      const ctx = state.tripContext || {};
+      const onEvent = createProgressBubble();
+      const result = await callAgentStream({
+        message: text,
+        destination: ctx.destination || '',
+        days: ctx.days || null,
+        start_date: ctx.date || '',
+        preferences: ctx.preferenceLabels || [],
+        style_prompt: state.systemExtra || '',
+        previous_itinerary: state.agentItinerary || null
+      }, onEvent, '/api/chat/stream');
+      if (result.plan) applyAgentPlan(result.plan);
       return result;
     }
 
@@ -1239,32 +1264,26 @@
         showToast('请输入对话内容', 'error');
         return;
       }
-      if (!state.tripContext) {
-        showToast('请先点击“AI规划行程”创建首轮行程', 'error');
-        return;
-      }
-
       inputEl.value = '';
       appendMessage('user', text);
       state.chatHistory.push({ role: 'user', content: text });
       trimChatHistory();
 
-      // 上一版是 Agent 生成的：把它和修改意见一起交给 Agent，在原行程上修改
-      if (USE_AGENT && state.agentItinerary) {
+      // 动态路由：问答类消息直接回答，“修改行程”类才会改动行程
+      if (USE_AGENT && (state.agentItinerary || !state.tripContext)) {
         try {
-          const ctx = state.tripContext;
-          const result = await runAgentPlan({
-            destination: ctx.destination, origin: ctx.origin, days: ctx.days, start_date: ctx.date,
-            preferences: ctx.preferenceLabels || [], style_prompt: state.systemExtra,
-            message: text, previous_itinerary: state.agentItinerary
-          });
-          state.chatHistory.push({ role: 'ai', content: result.text });
+          const result = await runChat(text);
+          state.chatHistory.push({ role: 'ai', content: result.answer });
           trimChatHistory();
-          appendMessage('ai', result.text);
+          appendMessage('ai', result.answer);
           return;
         } catch (err) {
-          console.warn('[agent] revise failed, fallback', err);
-          appendMessage('system', `⚠️ 智能修改暂不可用（${describeError(err)}），改用快速修改`);
+          console.warn('[chat] failed, fallback', err);
+          if (!state.tripContext) {
+            showToast('对话失败：' + describeError(err), 'error');
+            return;
+          }
+          appendMessage('system', `⚠️ 智能对话暂不可用（${describeError(err)}），改用快速修改`);
           state.agentItinerary = null;
         }
       }

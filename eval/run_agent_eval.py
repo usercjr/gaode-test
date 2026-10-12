@@ -99,7 +99,7 @@ async def eval_agent(agent: PlanAgent, case) -> Dict[str, Any]:
 
 async def main(limit: int) -> None:
     settings = get_settings()
-    setup_logging("INFO", settings.logging.dir)
+    setup_logging("INFO", settings.logging.dir, name="eval")
     cases = read_jsonl(CASES_PATH)[: limit or None]
     done = {r["cid"]: r for r in read_jsonl(RESULTS_PATH)}
     llm, amap = LLMClient(settings), AmapClient(settings)

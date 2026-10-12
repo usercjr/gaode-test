@@ -85,6 +85,22 @@ TOOL_DEFS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "nearby_search",
+            "description": "搜索某个地点周边的餐厅、景点、咖啡馆等，按距离排序，返回名称、距离、评分、人均。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "center": {"type": "string", "description": "中心地点名称，如“宽窄巷子”；或已查到的 poi_id"},
+                    "keywords": {"type": "string", "description": "要找什么，如“美食”“咖啡”“火锅”“景点”"},
+                    "radius_m": {"type": "integer", "description": "搜索半径（米），默认 1000，最大 5000"},
+                },
+                "required": ["center", "keywords"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_weather",
             "description": "查询目的地未来几天天气预报（高德只提供约 4 天）。",
             "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
@@ -128,6 +144,16 @@ TOOL_DEFS: List[Dict[str, Any]] = [
 SUBMIT_TOOL = "submit_itinerary"
 
 
+# 规划 Agent 使用的工具集（P3 评测时的配置，保持不变以便结果可复现）
+PLAN_TOOLS = ["search_notes", "poi_search", "route_plan", "get_weather", SUBMIT_TOOL]
+
+
+def tool_defs(names) -> List[Dict[str, Any]]:
+    """按名称取工具定义子集：不同路由只暴露需要的工具，减少模型误用与 token。"""
+    wanted = set(names)
+    return [t for t in TOOL_DEFS if t["function"]["name"] in wanted]
+
+
 @dataclass
 class ToolCallRecord:
     name: str
@@ -169,6 +195,7 @@ class ToolExecutor:
             "search_notes": self._search_notes,
             "poi_search": self._poi_search,
             "route_plan": self._route_plan,
+            "nearby_search": self._nearby_search,
             "get_weather": self._get_weather,
         }
 
@@ -259,6 +286,27 @@ class ToolExecutor:
         if not route:
             return {"ok": True, "empty": True, "hint": f"没有可行的{mode}路线，换一种交通方式"}
         return {"ok": True, **route}
+
+    async def _nearby_search(self, ctx: PlanContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        center_ref = str(args.get("center") or "").strip()
+        keywords = str(args.get("keywords") or "").strip()
+        if not center_ref or not keywords:
+            return {"ok": False, "error": "center 和 keywords 不能为空"}
+        center = ctx.pois.get(center_ref)
+        if center is None:  # 不是已知 poi_id，就按名称在目的地搜索
+            found = await self.amap.search_poi(center_ref, ctx.destination, limit=1)
+            if not found:
+                return {"ok": True, "empty": True, "hint": f"没找到“{center_ref}”，换个更标准的名称"}
+            center = found[0]
+            ctx.pois[center["poi_id"]] = center
+        radius = int(args.get("radius_m") or 1000)
+        pois = await self.amap.search_around(center["location"], keywords, radius=radius, limit=8)
+        out = []
+        for p in pois:
+            ctx.pois[p["poi_id"]] = p
+            out.append({"poi_id": p["poi_id"], "name": p["name"], "type": p["type"].split(";")[-1],
+                        "distance_m": p["distance_m"], "rating": p["rating"], "cost": p["cost"]})
+        return {"ok": True, "empty": not out, "center": center["name"], "pois": out}
 
     async def _get_weather(self, ctx: PlanContext, args: Dict[str, Any]) -> Dict[str, Any]:
         city = str(args.get("city") or "").strip()

@@ -18,7 +18,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agent.orchestrator import PlanAgent
-from agent.schemas import PlanRequest
+from agent.router import ChatRouter
+from agent.schemas import ChatRequest, PlanRequest
 from agent.tools import ToolExecutor
 from classifier.labels import format_input
 from classifier.service import ClassifierService
@@ -45,6 +46,7 @@ class Services:
     amap: AmapClient
     agent: PlanAgent
     classifier: ClassifierService
+    router: ChatRouter
 
 
 services = Services()
@@ -60,12 +62,13 @@ async def lifespan(_app: FastAPI):
     services.retriever = Retriever(services.store, settings.retrieval)
     services.rag = RagPipeline(services.retriever, services.llm, settings.rag.llm_model)
     services.classifier = ClassifierService(services.llm, settings.classifier.models_dir,
-                                            settings.classifier.style_model, settings.classifier.route_model)
+                                            settings.classifier.style_model, settings.classifier.route_model,
+                                            settings.classifier.route_confidence)
     services.amap = AmapClient(settings)
-    services.agent = PlanAgent(
-        services.llm, services.amap, ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k),
-        settings.agent,
-    )
+    executor = ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k)
+    services.agent = PlanAgent(services.llm, services.amap, executor, settings.agent)
+    services.router = ChatRouter(services.classifier, services.llm, services.rag, services.agent, executor,
+                                 services.amap)
     if not settings.amap_enabled:
         log.warning("AMAP_WEB_SERVICE_KEY is not set; /plan will fail")
     # 预加载 embedding 模型、向量库、BM25 索引和重排模型，避免首个请求因冷启动超时；
@@ -303,9 +306,8 @@ def _sse(event: str, data) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@app.post("/plan/stream")
-async def plan_stream(req: PlanRequest):
-    """Agent 规划（SSE 流式）：status / tool_call / validation 进度事件，最后 done 或 error。"""
+def _sse_response(job, op: str) -> StreamingResponse:
+    """把一个接受 emit 回调的协程包装成 SSE：进度事件实时推送，最后 done 或 error；客户端断开时取消任务。"""
     queue: asyncio.Queue = asyncio.Queue()
 
     async def emit(event: str, data) -> None:
@@ -313,13 +315,12 @@ async def plan_stream(req: PlanRequest):
 
     async def run() -> None:
         try:
-            result = await services.agent.plan(req, emit)
-            await queue.put(("done", result.to_dict()))
+            await queue.put(("done", await job(emit)))
         except AppError as e:
-            log.warning("plan failed", extra={"code": e.code.value, "detail": str(e.detail)[:300] if e.detail else None})
+            log.warning(f"{op} failed", extra={"code": e.code.value, "detail": str(e.detail)[:300] if e.detail else None})
             await queue.put(("error", error_body(e.code, e.message, request_id_var.get())))
         except Exception:
-            log.exception("plan crashed")
+            log.exception(f"{op} crashed")
             await queue.put(("error", error_body(ErrorCode.INTERNAL, ErrorCode.INTERNAL.spec.message, request_id_var.get())))
         finally:
             await queue.put(None)
@@ -334,11 +335,33 @@ async def plan_stream(req: PlanRequest):
                     break
                 yield _sse(*item)
         finally:
-            if not task.done():  # 客户端断开时停止规划，避免继续消耗 LLM 调用
+            if not task.done():  # 客户端断开时停止处理，避免继续消耗 LLM 调用
                 task.cancel()
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/plan/stream")
+async def plan_stream(req: PlanRequest):
+    """Agent 规划（SSE 流式）：status / tool_call / validation 进度事件，最后 done 或 error。"""
+
+    async def job(emit):
+        return (await services.agent.plan(req, emit)).to_dict()
+
+    return _sse_response(job, "plan")
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """聊天消息：先路由（plan / notes_qa / graph_qa / realtime / chitchat），再交给对应流程。"""
+    return await services.router.handle(req)
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """同 /chat，SSE 推送 route / tool_call / status 等进度事件。"""
+    return _sse_response(lambda emit: services.router.handle(req, emit), "chat")
 
 
 if __name__ == "__main__":

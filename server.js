@@ -158,6 +158,8 @@ function streamFromAgent(agentPath, timeoutMs) {
 
 app.post('/api/plan', proxyToAgent('/plan', config.timeouts.agentPlan));
 app.post('/api/plan/stream', streamFromAgent('/plan/stream', config.timeouts.agentPlan));
+app.post('/api/chat', proxyToAgent('/chat', config.timeouts.agentPlan));
+app.post('/api/chat/stream', streamFromAgent('/chat/stream', config.timeouts.agentPlan));
 app.post('/api/classify', proxyToAgent('/classify'));
 app.post('/api/itinerary', proxyToAgent('/itinerary', config.timeouts.agentLong));
 app.post('/api/rag/search', proxyToAgent('/search', config.timeouts.agentLong));

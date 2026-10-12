@@ -48,6 +48,7 @@ classifier:
   models_dir: agent_service/models  # 训练产物目录（不入库），见 classifier/train/train.py
   style_model: style_chinese-roberta-wwm-ext   # 验证集最优，见 eval/classifier_report.md
   route_model: route_chinese-roberta-wwm-ext
+  route_confidence: 0.97      # 低于该置信度交给 LLM；1.01 = 全部 LLM，0 = 全部本地（见 eval/route_threshold_report.md）
 
 server:
   host: 127.0.0.1

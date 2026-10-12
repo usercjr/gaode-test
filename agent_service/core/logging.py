@@ -3,6 +3,7 @@ import contextvars
 import json
 import logging
 import sys
+import time
 from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -31,7 +32,23 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def setup_logging(level: str = "INFO", log_dir: Optional[Path] = None, retention_days: int = 14) -> None:
+class SafeTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Windows 上文件被其他进程打开时 rename 会失败（WinError 32）。
+    标准实现会在之后每条日志都报错；这里改为本次跳过轮转、继续写当前文件，到下一个周期再试。"""
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except PermissionError:
+            if self.stream is None:
+                self.stream = self._open()
+            self.rolloverAt = self.computeRollover(int(time.time()))
+
+
+def setup_logging(level: str = "INFO", log_dir: Optional[Path] = None, retention_days: int = 14,
+                  name: str = "agent") -> None:
+    """name 决定日志文件名（{name}.log / {name}.error.log）：服务与离线脚本各用各的文件，
+    避免多个进程轮转同一个文件。"""
     formatter = JsonFormatter()
     root = logging.getLogger()
     root.handlers.clear()
@@ -43,8 +60,8 @@ def setup_logging(level: str = "INFO", log_dir: Optional[Path] = None, retention
 
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
-        for filename, file_level in (("agent.log", logging.NOTSET), ("agent.error.log", logging.ERROR)):
-            handler = TimedRotatingFileHandler(
+        for filename, file_level in ((f"{name}.log", logging.NOTSET), (f"{name}.error.log", logging.ERROR)):
+            handler = SafeTimedRotatingFileHandler(
                 log_dir / filename, when="midnight", backupCount=retention_days, encoding="utf-8"
             )
             handler.setLevel(file_level)
