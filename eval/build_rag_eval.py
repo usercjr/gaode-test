@@ -28,6 +28,7 @@ QUERIES_PATH = DATA_DIR / "rag_queries.jsonl"
 POOL_PATH = DATA_DIR / "rag_pool.jsonl"
 JUDGED_PATH = DATA_DIR / "rag_eval.jsonl"
 REVIEW_PATH = DATA_DIR / "rag_review.csv"
+REVIEW_KEY_PATH = DATA_DIR / "rag_review_key.jsonl"
 
 SEED = 20261012
 N_GROUNDED = 100
@@ -183,16 +184,36 @@ async def judge(llm: LLMClient, queries: List[dict], pools: List[dict], corpus: 
     return judged
 
 
+REVIEW_PER_GRADE = 20  # 每个 LLM 分数档抽 20 对，共 60 对，人工几分钟可完成
+
+
 def export_review(judged: List[dict], corpus: Dict[str, dict]) -> None:
+    """按 LLM 分数分层抽样（查询, 笔记）对，供人工核验判分一致率。已有人工填写时不覆盖。"""
+    if REVIEW_PATH.exists():
+        with REVIEW_PATH.open(encoding="utf-8-sig") as f:
+            if any(row[-1].strip() for row in list(csv.reader(f))[1:]):
+                print(f"[review] {REVIEW_PATH} already has human grades, skip")
+                return
     rng = random.Random(SEED)
-    sample = rng.sample(judged, min(30, len(judged)))
+    pairs_by_grade: Dict[int, List[tuple]] = {0: [], 1: [], 2: []}
+    for j in judged:
+        for nid, g in j["grades"].items():
+            pairs_by_grade[g].append((j, nid, g))
+    sample = []
+    for g in (2, 1, 0):
+        sample += rng.sample(pairs_by_grade[g], min(REVIEW_PER_GRADE, len(pairs_by_grade[g])))
+    rng.shuffle(sample)
+    # 盲标：表里不出现 LLM 分数，避免人工被暗示；LLM 分数另存，计算一致率时再对照
     with REVIEW_PATH.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["qid", "query", "note_id", "note_title", "llm_grade", "your_grade(0/1/2)"])
-        for j in sample:
-            for nid, g in sorted(j["grades"].items(), key=lambda kv: -kv[1]):
-                w.writerow([j["qid"], j["query"], nid, corpus[nid]["title"], g, ""])
-    print(f"[review] {len(sample)} queries -> {REVIEW_PATH}")
+        w.writerow(["no", "query", "note_title", "note_excerpt", "your_grade(0/1/2)"])
+        for i, (j, nid, _g) in enumerate(sample, start=1):
+            note = corpus[nid]
+            excerpt = note["text"][:150].replace("\n", " ")
+            w.writerow([i, j["query"], note["title"], excerpt, ""])
+    write_jsonl(REVIEW_KEY_PATH, [{"no": i, "qid": j["qid"], "note_id": nid, "llm_grade": g}
+                                  for i, (j, nid, g) in enumerate(sample, start=1)])
+    print(f"[review] {len(sample)} pairs -> {REVIEW_PATH}")
 
 
 async def main() -> None:
