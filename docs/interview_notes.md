@@ -2,7 +2,7 @@
 
 > 用途：面试前快速回忆“做了什么、为什么这么做、遇到什么问题、数字从哪来”。每完成一个阶段追加一节。
 > 配套文档：现状说明 `project_documentation.md`，路线图 `docs/upgrade_plan.md`，检索评测 `eval/rag_report.md`，Agent 评测 `eval/agent_report.md`，分类评测 `eval/classifier_report.md`，路由评测 `eval/router_report.md`、`eval/route_threshold_report.md`，记忆评测 `eval/memory_report.md`。
-> 最后更新：2026-10-13（P1~P6 完成）
+> 最后更新：2026-10-13（P1~P7 完成）
 
 ---
 
