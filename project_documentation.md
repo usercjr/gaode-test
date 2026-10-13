@@ -1,346 +1,196 @@
-# WanderAI · 行界 智能旅行助手 — 技术项目文档
+# WanderAI · 行界智能旅行助手 — 技术项目文档
 
-> **项目根目录：** `D:\gaode_test`  
-> **文档生成时间：** 2026-02-28  
-> **分析范围：** 所有核心源代码文件（server.js / app.py / AI_Travel_Assistant*.py / ai-chat.html / best_model/）
-
----
-
-## 一、技术栈概览
-
-| 层次 | 技术 / 框架 | 用途 |
-|------|------------|------|
-| **前端** | 原生 HTML5 + CSS3 + Vanilla JS | AI 聊天界面（`ai-chat.html`）、地图输出页（`output-map.html`） |
-| **前端地图** | 高德地图 JS API（AMap） | 行程景点地图可视化 |
-| **Node.js 中间层** | Express 5 + node-fetch + CORS | 静态文件服务、API 反向代理（`server.js`）|
-| **Python 推理服务** | FastAPI + Uvicorn | 本地分类模型 REST 服务（`python_service/app.py`）|
-| **本地 AI 模型** | PaddlePaddle + PaddleNLP | 旅行偏好文本分类（ERNIE 序列分类微调模型）|
-| **远程 LLM** | 百度文心大模型（Ernie-3.5-8k）/ 百度星河 AI Studio OpenAI 兼容 API | 行程文本生成 |
-| **远程 LLM SDK** | OpenAI Python SDK（兼容百度 OpenAI 接口） | Python 脚本调用 LLM |
-| **模型基座** | `ernie-3.0-base-zh`（vocab_size=40000, hidden_size=768, 12层） | 微调后保存至 `best_model/` |
-| **包管理** | npm（Node.js）、pip（Python） | 依赖管理 |
-
-### 架构模式
-
-```
-┌──────────────────────┐   HTTP /api/classify  ┌───────────────────────────────┐
-│   ai-chat.html       │ ──────────────────────▶│  python_service/app.py        │
-│  (前端 SPA)          │                        │  FastAPI  :8001               │
-│                      │ ◀──────────────────────│  本地 ERNIE + PaddleNLP 分类  │
-│                      │   { label, score }     └───────────────────────────────┘
-│                      │
-│                      │   HTTP /api/itinerary  ┌───────────────────────────────┐
-│                      │ ──────────────────────▶│  server.js (Express :3000)    │
-│                      │                        │  反向代理 ──────────────────────▶ 百度 AI Studio
-│                      │ ◀──────────────────────│                               │  (文心 LLM API)
-└──────────────────────┘   LLM 响应文本          └───────────────────────────────┘
-```
+> **项目根目录：** `D:\gaode_test`
+> **文档更新时间：** 2026-10-13（P7 知识图谱完成后）
+> **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
+> **升级规划：** 见 `docs/upgrade_plan.md`
+> **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
 
 ---
 
-## 二、代码逐模块分析
+## 一、项目定位与现状
 
-### 2.1 `server.js` — Node.js 中间层（端口 3000）
+两条能力链路：
 
-**职责：** 静态文件托管 + 两路 API 代理
+1. **旅行规划（Agent）**：本地微调模型识别风格（多标签，缺模型时退回 LLM）→ Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
+2. **聊天（动态路由）**：聊天框消息先由路由模型判断类型——修改行程才交给 Agent，经验问答走 RAG，“附近 / 常一起去 / 顺不顺路”先查知识图谱再用周边搜索与路线工具，天气与交通时长走实时工具，闲聊直接回复；只有“修改行程”会改动行程。
+3. **记忆**：长期记忆（同行人、饮食、行动限制、预算、节奏、喜好等，按匿名 user_id 存储）在规划与问答时作为约束注入；会话保留最近几轮原文 + 滚动摘要，含指代的追问先改写成独立问题。用户可在“我的偏好”里查看和删除。
+4. **知识图谱**：游记里的地点对齐到高德 POI 后存入 Neo4j（地点、城市、标签、游记；共现、邻近、所属关系），以 4 个参数化 Cypher 模板作为 Agent 工具；图谱不可用时自动降级为高德周边搜索。
+5. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
-| 路由 | 方法 | 说明 |
-|------|------|------|
-| `/*` | 静态 | 直接服务 `__dirname` 下的 HTML/JS 文件 |
-| `/api/classify` | POST | 将请求透传到 `http://127.0.0.1:8001/classify`（Python 分类服务）|
-| `/api/itinerary` | POST | 将请求透传到百度 AI Studio `chat/completions`，附加 `BAIDU_API_KEY` |
-
-**关键设计：**
-- `API_KEY` 仅保存在服务器环境变量中，前端不持有密钥 ✅
-- `PY_BASE`、`BAIDU_BASE_URL`、`BAIDU_MODEL` 均可通过环境变量覆盖 ✅
-- `/api/classify` 代理层无超时设置（前端已有 5s 超时兜底）⚠️
-
-**数据流：**
-```
-前端 POST { text } → /api/classify → fetch(PY_BASE/classify) → Python FastAPI → 返回 { label, score }
-前端 POST { model, messages } → /api/itinerary → fetch(BAIDU_ENDPOINT) → 百度 LLM → 返回 OpenAI 格式响应
-```
+所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
 
 ---
 
-### 2.2 `python_service/app.py` — 本地分类推理服务（端口 8001）
+## 二、技术栈
 
-**职责：** 用 FastAPI 暴露本地 ERNIE 文本分类模型
+| 层级 | 技术 | 用途 |
+|---|---|---|
+| 前端 | HTML + CSS + Vanilla JS | 聊天行程页、地图页、RAG 搜索页 |
+| 地图 | 高德 JS API 2.0 + Web 服务 API | POI 检索、地理编码、路线、地图展示 |
+| 网关 | Express 5 + node-fetch + dotenv | 页面托管、request-id、统一错误格式、高德代理、转发 |
+| Python 服务 | FastAPI + httpx + pydantic-settings | LLM 客户端、RAG、分类、行程生成 |
+| RAG | ChromaDB + bge-small-zh-v1.5（向量）、jieba + rank_bm25（关键词）、bge-reranker-base（重排） | 入库、混合召回、重排 |
+| LLM | DeepSeek（`deepseek-chat`，OpenAI 兼容接口，可在 `config.yaml` 切换） | 分类、行程、RAG 改写/重排/回答 |
 
-**关键函数：**
+---
 
-| 函数/端点 | 行号 | 说明 |
-|-----------|------|------|
-| `_maybe_load_model()` | 55–77 | FastAPI `startup` 事件，懒加载 `best_model/`; 目录不存在时以 503 占位启动 |
-| `_load_label_map()` | 24–45 | 从 `label_map.json` 读取标签映射；文件不存在时回退到5类硬编码默认值 |
-| `_softmax(x)` | 48–52 | NumPy 实现 softmax，用于将 logits 转为概率 |
-| `POST /classify` | 94–119 | **真正的推理调用**：tokenize → `model()` → softmax → 返回 `{ label, score }` |
-| `GET /healthz` | 84–91 | 健康检查，返回 `MODEL_READY` 状态 |
+## 三、架构
 
-**数据流：**
-```
-请求 { text } → tokenizer(text, max_seq_len=256) → model(input_ids, token_type_ids) → logits
-→ softmax → argmax → ID2LABEL[pred_id] → 返回 { label, score }
+```text
+浏览器
+  ├─ ai-chat.html ── /api/plan/stream (SSE) ─┐
+  │                ── /api/classify ─────┤
+  │                ── /api/rag/retrieve ─┤
+  │                ── /api/itinerary ────┤
+  ├─ rag-search.html ─ /api/rag/search ──┤
+  └─ output-map.html ─ /api/amap/* ──┐   │
+                                     ▼   ▼
+                    Node 网关 server.js (:3000)
+                     · 只托管页面与 src/ 脚本
+                     · X-Request-ID 生成与透传、JSON 访问日志
+                     · 统一错误格式、下游超时
+                     │                      │
+          高德 REST API（服务端加 Key）   agent_service (:8002)
+                                           · /classify /retrieve /search /itinerary
+                                           · /healthz /readyz /ingest/csv(仅本机)
+                                           · LLMClient：超时/重试/熔断/并发闸门
+                                           · ChromaDB 向量库
+                                               │
+                                           DeepSeek API
 ```
 
 ---
 
-### 2.3 `python_service/fine_tune/AI_Travel_Assistant.py` — 独立演示脚本
+## 四、模块说明
 
-**职责：** 本地 CLI 演示，将 PaddleNLP 分类 + 文心 LLM 串联
+### 4.1 Node 网关（`server.js`）
 
-**关键函数：**
+- **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。
+- **request-id**：沿用前端/调用方传入的 `X-Request-ID`，否则生成；透传给 `agent_service` 并写入响应头。
+- **转发**：`/api/memory`（GET / DELETE）、`/api/chat`、`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream`、`/api/chat/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
+- **高德代理**：`GET /api/amap/{place-text|geocode|driving|walking}`，白名单接口，服务端追加 Key；高德业务错误（`status:"0"`）会记录日志。
+- **就绪检查**：`GET /api/readyz` 汇总网关与 `agent_service` 的依赖状态。
+- **启动校验**：端口、`AGENT_BASE` 非法时直接退出；未配置高德 Key 时告警。
 
-| 函数 | 行号 | 说明 |
-|------|------|------|
-| `classify_preference(text)` | 105–123 | 直接调用本地 ERNIE 模型进行分类 |
-| `generate_itinerary(...)` | 45–95 | 通过 OpenAI SDK 调用百度星河 `chat/completions` |
-| `_extract_text(obj)` | 66–90 | 多层字段兼容解析，处理标准 OpenAI 与百度私有格式 |
+### 4.2 `agent_service`（Python）
 
-**注意：** 该脚本在模块顶层（第101行）直接 `AutoModelForSequenceClassification.from_pretrained(BEST_MODEL_DIR)`，**进程启动时即加载模型**，无懒加载。
+详见 `agent_service/README.md`。要点：
 
----
+- **配置外置**：`config.yaml`（非敏感）+ `.env`（密钥）+ 环境变量覆盖，`pydantic-settings` 启动时校验。
+- **错误码**：`core/errors.py` 统一定义 code、HTTP 状态、是否可重试、用户提示语；全局异常处理器统一输出。
+- **LLM 客户端**（`core/llm.py`）：
+  - 按错误类型重试：超时、429、5xx 指数退避重试；额度不足、鉴权失败不重试。
+  - 熔断：连续 5 次服务端类失败后断开 30 秒，期间快速失败。
+  - 并发闸门：同时最多 8 个 LLM 调用。
+  - 每次调用记录用途、模型、耗时、token 用量、错误码。
+- **混合检索**（`rag/retriever.py`）：查询中识别到城市/省份时先限定到相关笔记（元数据由 `rag/enrich.py` 用 LLM 抽取），再做向量 + BM25 召回、RRF 融合、交叉编码器重排。评测见 `eval/rag_report.md`：nDCG@5 从纯向量 0.775 提升到 0.859，Recall@5 从 0.845 到 0.896（LLM 判分，待人工核验）。
+- **RAG 降级**：改写、回答任一步 LLM 失败或重排模型出错都不让请求失败，跳过的步骤写入响应的 `degraded`。
+- **意图分类**（`classifier/`）：微调 chinese-roberta-wwm-ext 做风格 6 类多标签与路由 5 类，CPU 单条 23~43ms；模型目录缺失时退回 LLM 零样本，LLM 也不可用时返回默认标签。训练与评测见 `eval/classifier_report.md`，模型产物在 `agent_service/models/`（不入库，用 `python -m classifier.train.train` 重新训练）。
+- **日志**：JSON 行格式，带 `request_id`，按天滚动保留 14 天，错误单独写 `logs/agent.error.log`。
 
-### 2.4 `python_service/fine_tune/AI_Travel_Assistant_cli.py` — 多轮对话 CLI
+### 4.3 `ai-chat.html`
 
-**职责：** 命令行多轮旅行助理（含偏好分类 + LLM 调用），用于终端交互测试
+0. 表单新增“天数”；规划优先走 Agent（`/api/plan/stream`），进度在一个气泡里实时更新；多轮修改把上一版结构化行程回传给 Agent。以下 2~4 步是 Agent 失败时的回退流程。
+1. 用户手动选了风格标签则直接用，否则调用 `/api/classify`（10 秒超时）。
+2. 用识别出的标签调用 `/api/rag/retrieve`（仅向量召回，15 秒超时）；失败时在对话中提示“本次未参考真实游记”。
+3. 风格提示 + 笔记片段组成 system 消息，连同最近 30 条对话发给 `/api/itinerary`。
+4. 行程写入 localStorage，供地图页读取；LLM 失败时回退示例行程，提示语带错误原因与请求 ID 前 8 位。
 
-**关键设计：**
-- `classify_text()` (行61–71)：每轮用户输入都先过本地分类模型，获取偏好标签
-- `LABEL_PROMPTS` (行74–148)：8 类偏好标签各有专属系统 Prompt，动态注入风格指令
-- `chat_loop()` (行175–230)：维护 `messages` 历史；当超过 30 条时滑窗保留最近 20 条
+调试日志默认关闭，访问 `ai-chat.html?debug` 开启。
 
-**数据流：**
-```
-用户输入 → classify_text() [本地模型] → label → build_system_prompt(label)
-→ messages.append(system_label_msg + user_msg)
-→ client.chat.completions.create() [远程文心 LLM]
-→ 打印 assistant 回复
-```
+### 4.4 `output-map.html`
 
----
+解析行程文本 → 景点多级匹配（同城 POI → 全国 POI → 地理编码）→ 驾车/步行路线 → 地图渲染（`src/map.js`）。高德 REST 请求全部经 `/api/amap/*`。
 
-### 2.5 `ai-chat.html` — 前端 SPA（WanderAI 界面）
+### 4.5 `rag-search.html`
 
-**职责：** 用户交互入口，采集行程信息、调用两路后端 API、渲染结果
+RAG 调试页：展示意图、改写查询、召回数、答案（含降级说明）、召回片段。
 
-**关键函数：**
+### 4.6 数据与其他目录
 
-| 函数 | 说明 |
-|------|------|
-| `callLocalClassifier(text)` | POST 到 `/api/classify`，带 5s AbortController 超时 |
-| `callLLMItinerary({...})` | POST 到 `/api/itinerary`，构造 OpenAI 格式 body |
-| `buildMockPlan(...)` | 本地离线 Fallback，生成硬编码的"上海三日游"示例数据 |
-| `persistState(plan)` | 将行程数据写入 `localStorage` |
-| `renderPreferenceOptions()` | 动态渲染偏好标签选择 UI |
-
-**LLM 配置（第 630–636 行）：**
-```javascript
-const LLM_CONFIG = {
-  enabled: true,
-  endpoint: '/api/itinerary',   // 通过 Node.js 代理
-  model: 'ernie-3.5-8k',
-  key: ''                        // 不在前端持有密钥
-};
-```
+- `data/travel_notes.csv`：217 条游记（`id, title, text, suggested_label, final_label`）。
+- `data/*-cache.json`、`example/`、`src/parser.js`、`src/toAmapJson.js`：早期离线流程（`npm run generate:amap`）。
 
 ---
 
-### 2.6 `best_model/` — 本地微调模型文件
+### 4.7 记忆（`agent_service/memory/`）
 
-| 文件 | 说明 |
-|------|------|
-| `config.json` | ERNIE 架构配置；`model_type: "ernie"`; 8类标签（`LABEL_0`~`LABEL_7`）；12层 Transformer；`hidden_size=768` |
-| `model_state.pdparams` | PaddlePaddle 格式权重文件（**约 450 MB**） |
-| `tokenizer_config.json` | 基于 `ernie-3.0-base-zh`，`do_lower_case=true` |
-| `vocab.txt` | 40000 字符词表 |
+- 存储：SQLite `data/memory.sqlite3`（不入库），三张表：长期记忆、会话轮次、会话摘要。
+- 抽取：LLM 提候选，规则把关——固定 8 个键；证据必须出自用户原话；手机号/证件号/邮箱/卡号丢弃；低置信度先“待确认”，再次提到才生效；单值键新值覆盖旧值，“不喜欢 X”覆盖“喜欢 X”。
+- 使用：规划提示词加入“用户长期偏好与约束”；工具问答带上偏好；短追问结合上下文改写。
+- 抽取与回答并行执行，不增加回复延迟；摘要在后台执行。
+- 限制：没有登录体系，user_id 是浏览器本地生成的匿名 ID，仅适合演示。评测见 `eval/memory_report.md`。
 
-> ⚠️ `best_model/config.json` 中的 `id2label` 为 `{"0":"LABEL_0","1":"LABEL_1",...}` 通用占位符，**并非真实类别名称**。真实标签映射需要单独的 `label_map.json` 文件（目前该文件不存在于 `best_model/` 目录）。
+### 4.8 知识图谱（`agent_service/graph/`）
+
+- `align.py`：笔记元数据中的（地名, 城市）→ 高德 POI，结果缓存到 `data/graph/poi_alignment.jsonl`。
+- `build.py`：对齐过滤规则（类别不符、泛称片段、借名商户；三轮人工抽检迭代，见 `eval/graph_alignment_review.md`）+ 建图。规模：POI 465、City 30、Tag 18、Note 156；CO_MENTIONED 1,813、NEAR 848。
+- `queries.py`：nearby / co_visit（带直线距离）/ by_tag / evidence 四个模板；`client.py`：读超时 + 熔断 + `GRAPH_UNAVAILABLE`。
+- 部署：`docker-compose.yml` 中的 Neo4j 5.26 社区版，只绑定本机端口，密码 `NEO4J_PASSWORD` 放 `.env`。图谱是可选依赖。
+- 评测：`eval/graph_report.md`（有游记依据的推荐 2.2 → 5.3 个，延迟 -33%，token -23%；LLM 盲评不稳定，不作结论）。
+
+## 五、配置
+
+**`.env`（密钥，不提交）**
+
+```env
+LLM_API_KEY=your_deepseek_key_here
+AMAP_WEB_SERVICE_KEY=your_amap_web_service_key_here
+PORT=3000
+AGENT_BASE=http://127.0.0.1:8002
+NEO4J_PASSWORD=your_neo4j_password   # 可选，不配则图谱功能关闭
+```
+
+**`config.yaml`（非敏感，可提交）**：LLM 地址/模型/超时/并发/重试/熔断参数、向量库路径与 embedding 模型、服务端口、日志级别与目录。切换 LLM 服务商只需改 `llm.base_url`、`llm.model` 和 `.env` 里的 `LLM_API_KEY`。
 
 ---
 
-## 三、模型调用链路分析
-
-### ✅ 是否真正调用了本地训练好的模型进行推理？
-
-**结论：是的，代码中确实存在本地模型的推理调用，但存在一个关键配置缺失导致功能降级。**
-
-#### 调用路径 A：生产流程（前端 → Node.js → FastAPI → 本地模型）
-
-```
-ai-chat.html L649   callLocalClassifier(text)
-→ POST /api/classify
-  → server.js L62   fetch(`${PY_BASE}/classify`, ...)
-    → python_service/app.py L106-119  (FastAPI /classify 端点)
-      → tokenizer(req.text, ...)               ← 真实 Tokenization
-      → model(enc["input_ids"], enc["token_type_ids"])  ← 🔴 真实推理
-      → softmax → argmax → ID2LABEL[pred_id]
-      → return { label, score }
-```
-
-**关键代码行（`python_service/app.py`）：**
-```python
-# 第 106-118 行：
-enc = tokenizer(req.text, max_seq_len=256, pad_to_max_seq_len=True, return_tensors="pd")
-with paddle.no_grad():
-    logits = model(enc["input_ids"], enc["token_type_ids"])   # ← 真实本地推理
-logits_np = np.array(logits)
-probs = _softmax(logits_np)[0]
-pred_id = int(np.argmax(probs))
-label = ID2LABEL.get(pred_id, str(pred_id))
-```
-
-#### 调用路径 B：CLI 演示（`AI_Travel_Assistant_cli.py`）
-
-```python
-# 第 27-28 行（模块加载时）：
-tokenizer = AutoTokenizer.from_pretrained(BEST_MODEL_DIR)     # 加载 tokenizer
-clf_model = AutoModelForSequenceClassification.from_pretrained(BEST_MODEL_DIR)  # 加载本地模型权重
-
-# 第 68-69 行（classify_text 函数，每次推理）：
-with paddle.no_grad():
-    logits = clf_model(enc["input_ids"], enc["token_type_ids"])  # ← 真实推理
-```
-
----
-
-### ⚠️ 已发现的问题与未闭环点
-
-#### 问题 1：标签映射文件缺失（严重）
-
-- `best_model/config.json` 中 `id2label` 为占位符（`LABEL_0` ~ `LABEL_7`），不是真实类别名
-- `best_model/label_map.json` 文件**不存在**
-- `app.py` 第 38-45 行会回退到**5类**硬编码默认列表（`Rush_Trip`, `Deep_Cultural_Trip`, `Food_Adventure`, `Family_Friendly`, `Nightlife`）
-- `AI_Travel_Assistant_cli.py` 第 47-56 行回退到**8类**硬编码默认列表
-
-**后果：** 分类模型虽然真实运行，但返回的标签名称来自硬编码默认值，不一定与训练时的真实标签对齐，**分类结果不可信**。
-
-**修复方法：** 在训练完成后将真实 `id2label` 写入 `best_model/label_map.json`：
-```json
-{ "id2label": {"0":"Rush_Trip","1":"Deep_Cultural_Trip","2":"Food_Adventure","3":"Nature_Relaxation","4":"City_Leisure_Tour","5":"Customized_AI_Tour","6":"Vlog_Creator_Trip","7":"Photo_Experience"} }
-```
-
-#### 问题 2：app.py 的默认标签数（5）与模型实际输出维度（8）不匹配
-
-- `config.json` 中 `id2label` 有 8 个类别（0~7）
-- `app.py` 回退标签只有 5 个类别（0~4）
-- 若模型输出 pred_id ∈ {5,6,7}，会触发 `ID2LABEL.get(pred_id, str(pred_id))` 返回数字字符串
-
-#### 问题 3：行程文本生成使用远程 LLM，不是本地模型
-
-- 行程文本（itinerary）由**百度星河 文心大模型**（云端 API）生成
-- **本地模型（ERNIE 微调）仅用于"旅行偏好分类"**，并不生成回复文本
-- 如果未设置 `BAIDU_API_KEY`，`/api/itinerary` 会返回 500 错误，前端会 fallback 到硬编码的上海示例
-
----
-
-## 四、未完成部分与技术债务
-
-| 类型 | 位置 | 描述 |
-|------|------|------|
-| 🔴 **功能缺失** | `best_model/` | `label_map.json` 不存在，标签映射依赖硬编码占位 |
-| 🔴 **类别数不一致** | `app.py` L38-45 | 回退标签 5 类 vs 模型输出 8 类 |
-| 🟡 **硬编码** | `ai-chat.html` L728-796 `buildMockPlan()` | 上海三日行程硬编码为 Fallback，实际需要 LLM 才有真实结果 |
-| 🟡 **硬编码** | `ai-chat.html` L634 | `model: 'ernie-3.5-8k'` 写死，不支持切换 |
-| 🟡 **硬编码** | `AI_Travel_Assistant.py` L128 | `user_desc = "目的地：上海；偏好：独自出行、经典必去"` 测试入参写死 |
-| 🟡 **无超时** | `server.js` L62-68 | `/api/classify` 代理无服务端超时（前端有，但服务器侧可能资源泄露）|
-| 🟡 **异常处理不完善** | `app.py` L112-113 | `model(enc["input_ids"], enc["token_type_ids"])` 若 CUDA OOM 无降级处理 |
-| 🟡 **多轮历史滑窗简单粗暴** | `AI_Travel_Assistant_cli.py` L228-230 | 超过30条消息直接截断，可能截断关键上下文 |
-| 🟢 **信息性** | `fine_tune/README.md` L52 | 末行残留 `*** End Patch``` } />` 格式噪声 |
-| 🟢 **未使用依赖** | `package.json` | `dotenv` 已安装但 `server.js` 未调用（改用了直接 `process.env`）|
-
----
-
-## 五、环境配置要求
-
-### Node.js 服务（端口 3000）
+## 六、启动
 
 ```powershell
-# 安装依赖
-npm install
+# 1) Python 服务（:8002）
+cd D:\gaode_test\agent_service
+.\.venv-win\Scripts\python.exe app.py
 
-# 启动（必须设置环境变量）
-$env:BAIDU_API_KEY = "your_key_here"
-node server.js
+# （可选）知识图谱
+cd D:\gaode_test
+docker compose up -d neo4j
+
+# 2) Node 网关（:3000）
+cd D:\gaode_test
+npm start
 ```
 
-**可选环境变量：**
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `BAIDU_API_KEY` | —（必填）| 百度 AI Studio API Key |
-| `BAIDU_BASE_URL` | `https://aistudio.baidu.com/llm/lmapi` | LLM 接口基址 |
-| `BAIDU_API_VERSION` | `v1` | API 版本（v1 或 v3）|
-| `BAIDU_MODEL` | — | 默认模型名（优先前端传入）|
-| `PY_CLASSIFY_BASE` | `http://127.0.0.1:8001` | Python 分类服务地址 |
-| `PORT` | `3000` | Node 服务端口 |
+首次使用需建环境并入库，见 `agent_service/README.md`。
 
----
-
-### Python FastAPI 服务（端口 8001）
+验证：
 
 ```powershell
-# 创建 Python 3.10 虚拟环境
-cd D:\gaode_test\python_service
-py -3.10 -m venv .venv310
-.\.venv310\Scripts\Activate.ps1
-
-# 安装依赖
-pip install -r requirements.txt   # fastapi, uvicorn, paddlenlp, paddlepaddle
-
-# 启动
-uvicorn app:app --host 0.0.0.0 --port 8001
-
-# 可选环境变量
-$env:BEST_MODEL_DIR = "D:\gaode_test\best_model"
+Invoke-RestMethod http://127.0.0.1:3000/api/readyz
 ```
 
-**Python 环境要求：**
-- Python 3.10（PaddlePaddle 对 3.11+ 支持有限）
-- PaddlePaddle CPU 版即可运行（GPU 版对 CUDA 版本有严格要求）
+浏览器打开 `http://localhost:3000/`。
 
 ---
 
-## 六、潜在性能瓶颈与优化建议
+## 七、已知问题
 
-### 性能瓶颈
-
-| 问题 | 描述 | 影响 |
-|------|------|------|
-| **模型每次推理无批处理** | `classify` 端点每次只处理单条文本 | 高并发时吞吐量低 |
-| **模型常驻内存** | 450MB 权重文件常驻进程内存 | 内存占用高（CPU 模式约 1.5GB）|
-| **无推理结果缓存** | 相同文本每次都重新推理 | 重复请求浪费资源 |
-| **LLM 响应延迟** | 百度云端 API 网络 RTT 不稳定 | 前端等待时间长，无流式输出 |
-| **前端无 SSE/WebSocket** | 行程生成为一次性 JSON，不支持流式显示 | 用户体验差（等待感强）|
-
-### 优化建议
-
-1. **补充 `label_map.json`**（首要）：将训练时的真实标签写入文件，使分类结果可读且可靠。
-
-2. **开启 LLM 流式输出（SSE）**：百度 API 支持 `stream: true`，前端配合 `EventSource` 可实现逐字输出，大幅提升体验。
-
-3. **分类结果本地缓存**：前端或 Node 层按文本哈希缓存 `classify` 结果，减少重复调用。
-
-4. **CUDA 内存管理**（若使用 GPU）：加入 `paddle.device.cuda.empty_cache()` 在每次推理后释放临时显存。
-
-5. **统一回退标签数量**：`app.py` 的默认回退改为与 `AI_Travel_Assistant_cli.py` 一致的 8 类，同时确保类别顺序与训练时一致。
-
-6. **健康检查集成**：前端启动时调用 `GET /api/classify/healthz`（需对外暴露），展示本地模型状态 badge，提升开发调试体验。
+1. 高德 JS API 2.0 新 Key 需配置 `securityJsCode`，当前未配置。
+2. Agent 规划单次约 30~50 秒、约 5 万 token；高德个人 Key 有 QPS 与日配额限制（客户端限速 3 QPS）。
+3. 行程解析逻辑在 `output-map.html`、`src/parser.js`、`example/runAmapExample.js` 中各有一份。
+4. 检索评测的相关性标注由 LLM 完成，需人工抽检 `eval/data/rag_review.csv` 后再引用数字。
+5. 交叉编码器在 CPU 上重排 20 条约 3 秒，只用于 RAG 问答页；行程规划走不重排的路径（约 30ms）。
+6. `data/travel_notes.csv` 由两个文件合并，`id` 列有重复；系统改用内容哈希作为笔记 ID，原 `id` 保留为 `csv_id`。
+7. 知识图谱实体对齐精确率约 82%~88%，剩余错误来自元数据抽取（菜名 / 工艺品被当成地点、多城市笔记归错城市）；多数地点只被 1 篇游记提到。
 
 ---
 
-## 七、总结：项目整体评价
+## 八、评测
 
-### ✅ 优点
-
-- 架构职责清晰（前端 / Node 代理 / Python 推理）
-- API 密钥保存在服务端，安全设计合理
-- 分类服务支持懒加载（无模型文件也能启动）
-- CLI 多轮对话脚本设计完整，便于独立测试
-
-### ⚠️ 核心待解决问题
-
-> [!CAUTION]
-> **本地模型确实在运行，但标签语义已断链。** 模型输出的 pred_id (0~7) 无法映射到有意义的类别名称，因为 `best_model/label_map.json` 文件缺失。这是当前最关键的未闭环问题，修复后整条链路才真正完整。
-
-> [!IMPORTANT]
-> **行程文本由远程文心大模型（云端）生成，本地模型仅负责偏好分类。** 本地微调的 ERNIE 模型是分类器，不是文本生成器。如果希望本地模型承担生成任务，需要换用支持文本生成的模型架构（如 ERNIE-Bot fine-tune 或 ChatGLM 本地部署）。
+```powershell
+# 构建评测集（生成查询 → 候选池 → LLM 判分；已完成的步骤会跳过）
+agent_service\.venv-win\Scripts\python.exe eval\build_rag_eval.py
+# 消融评测，输出 eval/rag_report.md
+agent_service\.venv-win\Scripts\python.exe eval\run_rag_eval.py
+```

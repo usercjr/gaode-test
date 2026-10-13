@@ -99,19 +99,20 @@ async function geocodeAmapAll(itinerary, options = {}) {
 // --- End of inlined geocodeAmap.js content ---
 
 async function runAmapExample() {
-    const amapWebServiceKey = "9db1a68e5ab0f8b5c8ced8ac11c24411"; // Your Amap Web Service Key
-    const amapJsKey = "c81954c7638889562259c2d539b5bbed"; // Your Amap Web JS Key
+    // 密钥从环境变量读取（.env），不写进代码
+    const amapWebServiceKey = process.env.AMAP_WEB_SERVICE_KEY || "";
+    const amapJsKey = process.env.AMAP_JS_KEY || "";
     const inputPath = './example/input.txt';
     const tripDataPath = './example/output-amap.json';
     const templatePath = path.join(__dirname, 'template.singlefile.html');
     const outputHtmlPath = path.resolve(process.cwd(), 'output-map.html'); // Project root
 
     if (!amapWebServiceKey || amapWebServiceKey.includes("YOUR_AMAP_WEB_SERVICE_KEY")) {
-        console.error("❌ Error: 请在 runAmapExample.js 中填写你的高德 Web 服务 Key");
+        console.error("❌ Error: 请在 .env 中设置 AMAP_WEB_SERVICE_KEY");
         process.exit(1);
     }
     if (!amapJsKey || amapJsKey.includes("YOUR_AMAP_WEB_JS_KEY")) {
-        console.error("❌ Error: 请在 runAmapExample.js 中填写你的高德 Web JS Key");
+        console.error("❌ Error: 请在 .env 中设置 AMAP_JS_KEY");
         process.exit(1);
     }
 

@@ -1,0 +1,71 @@
+# agent_service 非敏感配置（可提交）。密钥放 .env，临时覆盖用环境变量，如 LLM__MODEL=xxx。
+
+llm:
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  timeout_s: 60
+  max_concurrency: 8          # 同时进行的 LLM 调用上限
+  retry_attempts: 3           # 含首次调用；仅对超时/429/5xx 重试
+  breaker_failure_threshold: 5
+  breaker_recovery_s: 30
+
+rag:
+  db_dir: agent_service/chroma_db   # 相对项目根目录
+  collection: travel_notes
+  embedding_model: BAAI/bge-small-zh-v1.5
+  llm_model: ""                     # 为空则使用 llm.model
+  data_dir: data                    # /ingest/csv 只允许读取该目录
+
+retrieval:
+  mode: hybrid                      # vector | bm25 | hybrid（BM25 + 向量，RRF 融合）
+  candidate_k: 30                   # 每路召回候选数
+  rerank_k: 20                      # 送入交叉编码器的候选数（CPU 约 140ms/条）
+  rrf_k: 60
+  rerank: cross_encoder             # cross_encoder | llm | none
+  reranker_model: BAAI/bge-reranker-base
+  reranker_max_length: 256
+  city_filter: true                 # 查询里出现城市/省份时只检索相关笔记
+  metadata_path: data/notes_metadata.jsonl
+
+amap:
+  base_url: https://restapi.amap.com
+  timeout_s: 5
+  retry_attempts: 3           # 含 QPS 超限（10019/10020/10021）重试
+  qps: 3                      # 客户端限速，个人 Key 配额低；并行工具调用超过会报 10021
+  cache_size: 5000            # 进程内 LRU，地点/路线/天气结果复用
+  cache_ttl_s: 86400
+
+agent:
+  max_steps: 12               # 单次规划最多的 LLM 轮数
+  max_fix_rounds: 2           # 校验不通过后允许修正的次数
+  max_leg_minutes: 60         # 相邻两站交通时长上限
+  max_day_minutes: 720        # 每日停留 + 交通总时长上限
+  default_days: 3
+  notes_top_k: 4
+  temperature: 0.4
+
+classifier:
+  models_dir: agent_service/models  # 训练产物目录（不入库），见 classifier/train/train.py
+  style_model: style_chinese-roberta-wwm-ext   # 验证集最优，见 eval/classifier_report.md
+  route_model: route_chinese-roberta-wwm-ext
+  route_confidence: 0.97      # 低于该置信度交给 LLM；1.01 = 全部 LLM，0 = 全部本地（见 eval/route_threshold_report.md）
+
+memory:
+  enabled: true
+  db_path: data/memory.sqlite3      # 长期记忆与会话记录（不入库）
+
+graph:
+  enabled: true                     # Neo4j 不可用时自动降级为高德周边搜索
+  uri: bolt://127.0.0.1:7687        # 密码在 .env 的 NEO4J_PASSWORD
+  user: neo4j
+  timeout_s: 3
+  near_radius_m: 1500
+
+server:
+  host: 127.0.0.1
+  port: 8002
+
+logging:
+  level: INFO
+  dir: logs
+  retention_days: 14

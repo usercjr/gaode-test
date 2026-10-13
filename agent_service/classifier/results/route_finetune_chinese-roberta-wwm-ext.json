@@ -1,0 +1,136 @@
+{
+ "val": {
+  "accuracy": 0.9615384615384616,
+  "macro_f1": 0.9654658385093168,
+  "per_label_f1": {
+   "plan": 1.0,
+   "notes_qa": 0.964,
+   "graph_qa": 1.0,
+   "realtime": 0.95,
+   "chitchat": 0.913
+  },
+  "confusion": [
+   [
+    12,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    27,
+    0,
+    0,
+    1
+   ],
+   [
+    0,
+    0,
+    21,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    19,
+    0
+   ],
+   [
+    0,
+    1,
+    0,
+    2,
+    21
+   ]
+  ]
+ },
+ "test": {
+  "accuracy": 0.9545454545454546,
+  "macro_f1": 0.9538370914917179,
+  "per_label_f1": {
+   "plan": 0.957,
+   "notes_qa": 0.953,
+   "graph_qa": 0.953,
+   "realtime": 1.0,
+   "chitchat": 0.905
+  },
+  "confusion": [
+   [
+    45,
+    0,
+    1,
+    0,
+    2
+   ],
+   [
+    1,
+    41,
+    0,
+    0,
+    3
+   ],
+   [
+    0,
+    0,
+    41,
+    0,
+    3
+   ],
+   [
+    0,
+    0,
+    0,
+    45,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    38
+   ]
+  ]
+ },
+ "thresholds": null,
+ "best_epoch": 3,
+ "history": [
+  {
+   "epoch": 1,
+   "train_loss": 0.887,
+   "val_main": 0.9459
+  },
+  {
+   "epoch": 2,
+   "train_loss": 0.077,
+   "val_main": 0.9424
+  },
+  {
+   "epoch": 3,
+   "train_loss": 0.0492,
+   "val_main": 0.9655
+  },
+  {
+   "epoch": 4,
+   "train_loss": 0.0263,
+   "val_main": 0.9655
+  },
+  {
+   "epoch": 5,
+   "train_loss": 0.0294,
+   "val_main": 0.9655
+  }
+ ],
+ "train_seconds": 536.1,
+ "latency_ms_p50": 23.4,
+ "model_mb": 409.2,
+ "task": "route",
+ "method": "finetune",
+ "base": "hfl/chinese-roberta-wwm-ext",
+ "n_train": 943,
+ "n_val": 104,
+ "n_test": 220
+}

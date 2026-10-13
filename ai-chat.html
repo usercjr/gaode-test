@@ -141,7 +141,8 @@
       color: #1e293b;
     }
 
-    .input-field input {
+    .input-field input,
+    .input-field select {
       border-radius: 12px;
       border: 1px solid rgba(148, 163, 184, 0.35);
       background: rgba(255, 255, 255, 0.85);
@@ -150,7 +151,8 @@
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
-    .input-field input:focus {
+    .input-field input:focus,
+    .input-field select:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
@@ -395,6 +397,13 @@
       box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
     }
 
+    .memory-hint { color: var(--muted, #64748b); font-size: 13px; margin: 0 0 12px; }
+    .memory-list { list-style: none; padding: 0; margin: 0 0 16px; max-height: 50vh; overflow: auto; }
+    .memory-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.25); }
+    .memory-list .memory-text { flex: 1; font-size: 14px; }
+    .memory-list .memory-pending { font-size: 12px; color: #b45309; }
+    .memory-list button { border: none; background: none; color: #dc2626; cursor: pointer; font-size: 13px; }
+
     .dialog-actions {
       display: flex;
       justify-content: flex-end;
@@ -458,6 +467,20 @@
           <label for="field-date">日期 / 时间</label>
           <input id="field-date" type="date" />
         </div>
+        <div class="input-field">
+          <label for="field-days">天数</label>
+          <select id="field-days">
+            <option value="1">1 天</option>
+            <option value="2">2 天</option>
+            <option value="3" selected>3 天</option>
+            <option value="4">4 天</option>
+            <option value="5">5 天</option>
+          </select>
+        </div>
+        <div class="input-field">
+          <label for="field-note">补充需求（可选）</label>
+          <input id="field-note" type="text" maxlength="200" placeholder="如 带爸妈，不想太累，想吃本地小吃" autocomplete="off" />
+        </div>
       </div>
 
       <div class="preference-row">
@@ -475,6 +498,7 @@
       <div class="chat-log" id="chatLog"></div>
       <div class="chat-toolbar">
         <button class="btn-link" id="clearChatBtn">清空会话</button>
+        <button class="btn-link" id="memoryBtn">🧠 我的偏好</button>
         <div class="chat-actions">
           <button class="btn-ghost" id="secondaryMapBtn">查看地图</button>
         </div>
@@ -493,6 +517,18 @@
       <div class="dialog-actions">
         <button class="btn-ghost" id="prefCancel">取消</button>
         <button class="btn-primary" id="prefConfirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pref-dialog" id="memoryDialog">
+    <div class="pref-content">
+      <h3>我的偏好（长期记忆）</h3>
+      <p class="memory-hint">从你说过的话里记下的长期偏好，会在以后规划时自动考虑。“待确认”的条目需要你再提到一次才会生效。</p>
+      <ul class="memory-list" id="memoryList"></ul>
+      <div class="dialog-actions">
+        <button class="btn-ghost" id="memoryClear">全部清空</button>
+        <button class="btn-primary" id="memoryClose">关闭</button>
       </div>
     </div>
   </div>
@@ -549,14 +585,14 @@
 
     // 结合你的微调 Prompt 风格标签（来自 CLI 版本的设计）
     const LABEL_PROMPTS = {
-      Rush_Trip: '🎯【特种兵式高效快游风格】用户希望在最短时间打卡最多景点，追求效率、压缩休息时间。规划规则：一天安排更多景点；强调时间-地点-理由-通勤方式/时长；合理排序避免折返；提供下雨/排队替代方案；效率优先。',
-      Deep_Cultural_Trip: '📚【深度文化体验风格】偏好历史人文/非遗/博物馆/古镇，注重理解城市文化。规划规则：附加文化背景或故事；提供讲解方式；合理安排参观顺序；标注预约/闭馆日/最佳参观时间。',
-      Food_Adventure: '🍜【美食探店风格】以「吃」为核心，餐厅是重点。规划规则：每天2~4家餐厅；列出招牌菜、排队时段、是否预约、价格区间；景点作为餐厅之间过渡；可标注夜市/早餐/深夜食堂。',
-      Nature_Relaxation: '🌿【自然放松疗愈风格】偏好自然风景、公园、山/湖/森林，追求松弛与治愈。规划规则：一天1~3个地点、节奏慢；安排轻徒步/观景台/野餐/休息；减少长途奔波；推荐最佳观景时间。',
-      City_Leisure_Tour: '🏙【城市休闲 Citywalk 风格】偏好逛街、街区氛围、咖啡馆、小店、夜景、拍照。规划规则：串联商圈/街区/地标；强调步行可达与氛围；推荐咖啡店与小众艺术空间；可加入夜生活。',
-      Customized_AI_Tour: '🤖【智能综合行程规划风格】未明确偏好或希望智能最优。规划规则：综合考虑景点分布/住宿/交通/开放时间；每段附通勤建议和预估时长；给出费用估算与替代选项；结构清晰。',
-      Vlog_Creator_Trip: '🎥【Vlog 创作者风格】强调画面感与故事性但不过度专业。规划规则：语言口语化；提示好拍点与出片角度；安排有节奏的场景切换；给出少量拍摄建议（光线/人流）。',
-      Photo_Experience: '📸【拍照打卡/出片风格】追求“照片成果感”。规划规则：列出机位/角度/构图；标注时间光线；提供避人技巧与姿势；可安排换装/道具租赁信息。'
+      Rush_Trip: '🎯【特种兵式高效快游风格】用户要在最短时间打卡最多景点！像这样写——“早上6点趁没人先冲xx，拍完照骑共享单车10分钟杀到xx，省去排队直接冲二楼观景台📍”。规划规则：一天5+景点紧凑排列；每个景点标注建议停留时间（如”30min速览”）；必须标注景点间交通方式和耗时；提供排队太长时的备选方案。',
+      Deep_Cultural_Trip: '📚【深度文化体验风格】像文化博主一样讲故事——“站在这座600年的城墙上，脚下每一块砖都刻着工匠的名字，这是明朝的质量追溯系统啊”。规划规则：每个景点附1-2句文化背景小故事；标注是否需要预约、讲解器租赁（价格）；注明闭馆日和最佳参观时段；推荐周边值得驻足的文创小店。',
+      Food_Adventure: '🍜【美食探店风格】像美食博主一样写——“这家的红油抄手我愿意排40分钟！皮薄馅大，红油香而不辣，2块钱一个简直离谱😭”。规划规则：每天安排2~4家餐厅为主线；每家必须写：人均消费、必点菜1-3道、最佳到店时间、排队预估；景点穿插在餐厅之间作为消食散步；标注夜市/早餐/深夜食堂的营业时间。',
+      Nature_Relaxation: '🌿【自然放松疗愈风格】像治愈系博主一样写——“清晨的湖面起了薄雾，坐在栈道上发呆听鸟叫，这一刻觉得请假太值了🍃”。规划规则：一天最多3个地点，节奏放慢；推荐最佳观景时间段（如日出/黄昏/雨后）；安排轻徒步路线标注难度和耗时；穿插休息点如湖边咖啡馆或草坪野餐。',
+      City_Leisure_Tour: '🏙️【城市休闲 Citywalk 风格】像city walk博主一样写——“从xx巷子拐进去，整条街都是梧桐树荫，走两步就有一家藏在老洋房里的咖啡馆☕”。规划规则：设计步行可串联的路线；强调街区氛围和偶遇感；推荐特色咖啡馆/独立书店/小众买手店（附人均）；加入适合散步的时间段和夜景路线。',
+      Customized_AI_Tour: '🤖【智能综合行程规划风格】平衡效率和体验——“上午打卡经典地标，下午钻进本地人才知道的小街巷，晚上去评分最高的那家馆子犒劳自己”。规划规则：综合考虑景点分布避免折返；每段附交通方式和预估时长；标注人均费用；经典景点和小众体验穿插搭配。',
+      Vlog_Creator_Trip: '🎥【Vlog 创作者风格】像vlog博主一样写——“这个转角一定要拍！逆光走过来，背景刚好是整条古街的纵深感，氛围感直接拉满🎬”。规划规则：语言口语化有画面感；标注出片点位和推荐拍摄角度；安排有节奏的场景切换（安静→热闹→安静）；提示最佳光线时间和避开人流的技巧。',
+      Photo_Experience: '📸【拍照打卡出片风格】像摄影博主一样写——“下午4点的光线打在红墙上绝了！站在台阶第三级，侧身回头看镜头，随手一拍就是氛围大片”。规划规则：每个景点标注最佳拍摄时间和光线方向；推荐具体机位和构图方式；提供穿搭/道具建议；标注人少的时间段和避开游客的小技巧。'
     };
 
     function buildSystemPromptByLabel(label) {
@@ -577,13 +613,29 @@
       itineraryJson: null,
       chatHistory: [],
       tripContext: null,
-      systemExtra: ''
+      systemExtra: '',
+      ragSnippets: '',
+      agentItinerary: null  // Agent 返回的结构化行程，多轮修改时回传
     };
     const MAX_CHAT_MESSAGES = 30;
 
     // 统一的 API 基址，确保从任何入口打开页面都能命中同源代理
     const API_BASE = window.location.origin;
-    const DEBUG = true;
+
+    // 匿名用户 ID（长期记忆按它区分，存在本浏览器）与会话 ID（清空会话时重置）
+    function newId() {
+      return (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
+    }
+    const USER_ID = (() => {
+      try {
+        let id = localStorage.getItem('wanderAi.userId');
+        if (!id) { id = newId(); localStorage.setItem('wanderAi.userId', id); }
+        return id;
+      } catch (_) { return newId(); }
+    })();
+    let SESSION_ID = newId();
+    // 调试日志：页面地址加 ?debug 开启
+    const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
     function renderPreferenceOptions() {
       const container = document.getElementById('prefContainer');
@@ -673,13 +725,44 @@
       });
     }
 
-    function buildItineraryInstruction({ origin, destination, date, preferences, systemExtra }) {
-      let sys = `你是旅行行程规划助手。严格按如下中文格式输出行程文本，不要额外解释或添加 markdown 代码块：\n\n第1天 标题\n- [城市] 景点（备注）\n- [城市] 景点（备注）\n\n第2天 标题\n- [城市] 景点（备注）\n...\n\n要求：\n- 标题以“第N天 …”开头；\n- 每个景点一行，以“- ”开头；\n- 城市写在中括号内，如[上海]；备注写在中文括号内；\n- 不要输出除行程文本以外的任何内容。`;
+    function buildItineraryInstruction({ origin, destination, date, preferences, systemExtra, ragSnippets }) {
+      let sys = `你是一个资深旅行博主兼行程规划师。你需要像小红书热门攻略一样，用生动、有温度的语言输出行程。
+
+【输出格式要求】
+严格按如下格式输出，不要额外解释或添加 markdown 代码块：
+
+第1天 标题（标题要有画面感，如”老成都的烟火气与味蕾暴击🔥”）
+- [城市] 景点名（实用备注）
+- [城市] 景点名（实用备注）
+
+第2天 标题
+- [城市] 景点名（实用备注）
+...
+
+格式规则：
+- 标题以”第N天 …”开头，标题要吸引人，可带1个emoji
+- 每个景点一行，以”- “开头
+- 城市写在中括号内，如[成都]
+- 备注写在中文括号内
+
+【内容风格要求】
+1. 像朋友在分享旅行经历一样写——不要百科式介绍，要有体验感和温度
+2. 每个景点备注要包含实用信息：最佳到达时间、人均花费、停留建议、拍照tips或避坑提醒，至少写2-3条
+3. 推荐理由要具体生动：不说”风景优美”，要说”日落时分站在九眼桥上能看到整条锦江的金色光带✨”
+4. 适当使用emoji增加可读性（每个景点1-2个），但不要堆砌
+5. 行程安排要合理：考虑景点之间的距离和交通，标注交通方式和大约耗时
+6. 不要输出除行程文本以外的任何内容`;
+
       if (systemExtra && typeof systemExtra === 'string') {
-        sys += `\n\n补充限制：${systemExtra}`;
+        sys += `\n\n【风格偏好补充】\n${systemExtra}`;
       }
+
+      if (ragSnippets && ragSnippets.trim()) {
+        sys += `\n\n【参考素材——真实旅行者的笔记】\n以下是其他旅行者分享的真实体验，请从中提取有价值的信息（如具体店名、实用tips、踩坑经验）融入你的行程推荐，但不要照搬原文：\n\n${ragSnippets}`;
+      }
+
       const tripContext = `出发地：${origin || '未填写'}；目的地：${destination || '未填写'}；日期：${date || '未填写'}；偏好：${(preferences || []).join('、') || '未选择'}。`;
-      return `${sys}\n\n【固定背景】\n${tripContext}\n\n【多轮对话要求】\n你将基于后续对话历史持续优化同一份行程。`;
+      return `${sys}\n\n【固定背景】\n${tripContext}\n\n【多轮对话要求】\n你将基于后续对话历史持续优化同一份行程。如果用户提出修改需求，在保持上述风格的前提下调整行程。`;
     }
 
     function trimChatHistory() {
@@ -705,103 +788,322 @@
     }
 
     // ========== LLM 设置（隐藏在代码中）与调用 ==========
-    // 注意：把密钥写在前端会暴露给任何能打开页面的人，仅适合本地临时联调。
-    // 正式环境请改为“后端代理调用模型接口”。
     const LLM_CONFIG = {
       enabled: true,
-      // 改为本地代理，前端不再携带密钥
-      endpoint: '/api/itinerary',
-      model: 'ernie-3.5-8k',
-      key: ''
+      // 走网关代理；模型与密钥都在 agent_service 配置，前端不携带
+      endpoint: '/api/itinerary'
     };
 
     function getLLMSettings() {
-      const { enabled, endpoint, model, key } = LLM_CONFIG || {};
-      return { ep: enabled ? endpoint : '', model: enabled ? model : '', key: enabled ? key : '' };
+      const { enabled, endpoint } = LLM_CONFIG || {};
+      return { ep: enabled ? endpoint : '' };
     }
 
-    // 本地分类器（可选）
-    async function callLocalClassifier(text) {
-      if (DEBUG) console.log('[classify] POST', `${API_BASE}/api/classify`, { text });
-      // 添加 5 秒超时，避免分类服务异常时阻塞后续 LLM 调用
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const resp = await fetch(`${API_BASE}/api/classify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-        signal: controller.signal
-      }).finally(() => clearTimeout(timeoutId));
-      if (DEBUG) console.log('[classify] status', resp.status);
-      if (!resp.ok) {
-        const t = await resp.text().catch(() => '');
-        if (DEBUG) console.error('[classify] error payload', t);
-        throw new Error('classify 接口错误：' + resp.status + ' ' + t);
+    // 接口错误：携带统一错误格式里的 code / retryable / request_id
+    class ApiError extends Error {
+      constructor(message, { code = 'INTERNAL', retryable = false, requestId = '', status = 0 } = {}) {
+        super(message);
+        this.code = code;
+        this.retryable = retryable;
+        this.requestId = requestId;
+        this.status = status;
       }
-      const data = await resp.json(); // { label, score }
-      if (DEBUG) console.log('[classify] result', data);
+    }
+
+    // 统一的 POST JSON 请求：超时、错误体解析、日志
+    async function postJson(path, body, { timeoutMs = 30000, tag = 'api' } = {}) {
+      if (DEBUG) console.log(`[${tag}] POST`, path, body);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      let resp;
+      try {
+        resp = await fetch(`${API_BASE}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+      } catch (e) {
+        if (e.name === 'AbortError') throw new ApiError('请求超时，请稍后重试', { code: 'CLIENT_TIMEOUT', retryable: true });
+        throw new ApiError('无法连接服务，请检查网关是否启动', { code: 'NETWORK_ERROR', retryable: true });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const requestId = resp.headers.get('X-Request-ID') || '';
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        const err = data?.error || {};
+        if (DEBUG) console.error(`[${tag}] error`, resp.status, data);
+        throw new ApiError(err.message || `接口错误 ${resp.status}`, {
+          code: err.code, retryable: !!err.retryable, requestId: err.request_id || requestId, status: resp.status
+        });
+      }
+      if (DEBUG) console.log(`[${tag}] ok`, data);
+      if (data?.degraded?.length) console.warn(`[${tag}] degraded:`, data.degraded);
       return data;
     }
 
-    async function callLLMItinerary({ origin, destination, date, preferences, systemExtra, chatHistory }) {
-      const { ep, model, key } = getLLMSettings();
-      if (!ep || !model) {
-        // 走代理时无需 key；仅校验 endpoint 和 model
-        if (!ep) throw new Error('缺少代理地址');
-        if (!model) throw new Error('缺少模型名');
-      }
+    // 给用户看的错误文案：附带请求 ID 前 8 位，方便对照服务端日志
+    function describeError(e) {
+      const rid = e && e.requestId ? `（请求ID ${e.requestId.slice(0, 8)}）` : '';
+      return `${(e && e.message) || e}${rid}`;
+    }
 
-      const instruction = buildItineraryInstruction({ origin, destination, date, preferences, systemExtra });
-      const providerMessages = [{ role: 'user', content: instruction }];
+    // RAG 轻量检索（自动融合笔记到行程 prompt）
+    // 行程场景只做向量召回（不走 LLM 重排），延迟低；超时留给偶发的冷启动
+    function callRAGRetrieve(query, styleLabel = '', topK = 5) {
+      return postJson('/api/rag/retrieve',
+        { query, top_k: topK, style_label: styleLabel, use_rerank: false },
+        { timeoutMs: 15000, tag: 'rag' }); // { query, hits: [{title, text, similarity}], count, degraded }
+    }
+
+    function formatRAGSnippets(hits) {
+      if (!hits || !hits.length) return '';
+      return hits.map((h, i) => {
+        const title = h.title ? `「${h.title}」` : '';
+        return `【笔记${i + 1}】${title}\n${h.text}`;
+      }).join('\n\n');
+    }
+
+    // 风格分类（agent_service /classify），10 秒超时，避免异常时阻塞后续行程生成
+    // 传结构化字段，由服务端按训练数据的格式拼接，保证线上输入与训练分布一致
+    function callLocalClassifier({ destination, preferences, message }) {
+      return postJson('/api/classify', { destination, preferences, message },
+        { timeoutMs: 10000, tag: 'classify' }); // { label, score, labels, source }
+    }
+
+    async function callLLMItinerary({ origin, destination, date, preferences, systemExtra, ragSnippets, chatHistory }) {
+      const { ep } = getLLMSettings();
+      if (!ep) throw new Error('缺少代理地址');
+
+      const instruction = buildItineraryInstruction({ origin, destination, date, preferences, systemExtra, ragSnippets });
+      // 规划指令作为 system，避免与对话历史首条 user 消息连续重复
+      const messages = [{ role: 'system', content: instruction }];
       (chatHistory || []).forEach(msg => {
         if (!msg || !msg.content) return;
-        if (msg.role === 'user') providerMessages.push({ role: 'user', content: msg.content });
-        if (msg.role === 'ai') providerMessages.push({ role: 'assistant', content: msg.content });
+        if (msg.role === 'user') messages.push({ role: 'user', content: msg.content });
+        if (msg.role === 'ai') messages.push({ role: 'assistant', content: msg.content });
       });
-      const body = { model, messages: providerMessages, temperature: 0.7 };
 
-      const headers = { 'Content-Type': 'application/json' };
-      // 直接连厂商时需要 Authorization；走本地代理则不需要
-      if (key) headers['Authorization'] = 'Bearer ' + key;
-      const epAbs = ep.startsWith('http') ? ep : `${API_BASE}${ep}`;
-      if (DEBUG) console.log('[llm] POST', epAbs, body);
-      const resp = await fetch(epAbs, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      });
-      if (!resp.ok) {
-        const t = await resp.text().catch(() => '');
-        console.error('LLM 请求失败：', { url: epAbs, status: resp.status, body, response: t });
-        throw new Error('LLM 接口错误：' + resp.status + ' ' + t);
-      }
-      const data = await resp.json();
-      if (DEBUG) console.log('[llm] ok', data);
-
-      // 供应商可能返回 { errorCode, errorMsg, result: {...} }
-      if (typeof data?.errorCode === 'number' && data.errorCode !== 0) {
-        throw new Error(`LLM 返回错误：${data.errorCode} ${data.errorMsg || ''}`.trim());
-      }
-
-      // 兼容不同厂商/网关的字段：
-      let text =
-        data?.choices?.[0]?.message?.content ||
-        data?.choices?.[0]?.content ||
-        // 顶层直接给字符串
-        (typeof data?.result === 'string' ? data.result : '') ||
-        // 顶层 result 对象里可能再嵌 result/output_text/choices
-        (typeof data?.result?.result === 'string' ? data.result.result : '') ||
-        (typeof data?.result?.output_text === 'string' ? data.result.output_text : '') ||
-        (Array.isArray(data?.result?.choices) && typeof data.result.choices[0]?.message?.content === 'string'
-          ? data.result.choices[0].message.content
-          : '') ||
-        data?.output_text ||
-        (Array.isArray(data?.data) && typeof data.data[0]?.content === 'string' ? data.data[0].content : '');
-      if (typeof text === 'string') text = text.trim();
-      if (!text) {
-        throw new Error('LLM 未返回文本');
-      }
+      // 服务端含 LLM 重试，最长约 3 分钟
+      const data = await postJson(ep, { messages, temperature: 0.7 }, { timeoutMs: 180000, tag: 'llm' });
+      const text = (data?.text || '').trim();
+      if (!text) throw new ApiError('AI 未返回内容，请重试', { code: 'UPSTREAM_LLM_BAD_RESPONSE', retryable: true });
       return { title: destination ? `${destination} 行程规划` : 'AI 行程', text };
+    }
+
+    // ---------------- Agent 规划（Function Calling，SSE 流式进度） ----------------
+    const USE_AGENT = true;
+
+    // 读取 SSE：逐个解析 "event: x\ndata: {...}\n\n"
+    async function callAgentStream(body, onEvent, path = '/api/plan/stream') {
+      const resp = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).catch(() => { throw new ApiError('无法连接服务，请检查网关是否启动', { code: 'NETWORK_ERROR', retryable: true }); });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        const err = data?.error || {};
+        throw new ApiError(err.message || `接口错误 ${resp.status}`, { code: err.code, requestId: err.request_id, status: resp.status });
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const event = (block.match(/^event: (.*)$/m) || [])[1];
+          const dataLine = (block.match(/^data: (.*)$/m) || [])[1];
+          if (!event || !dataLine) continue;
+          const data = JSON.parse(dataLine);
+          if (DEBUG) console.log('[agent]', event, data);
+          if (event === 'error') {
+            const err = data.error || {};
+            throw new ApiError(err.message || '规划失败', { code: err.code, retryable: err.retryable, requestId: err.request_id });
+          }
+          if (event === 'done') result = data;
+          else onEvent(event, data);
+        }
+      }
+      if (!result) throw new ApiError('规划中断，请重试', { code: 'STREAM_INTERRUPTED', retryable: true });
+      return result;
+    }
+
+    // 一个原地更新的进度气泡，避免几十条工具调用刷屏
+    function createProgressBubble() {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message system';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = '规划进度';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+      chatLogEl.appendChild(wrapper);
+      const counts = { search_notes: 0, poi_search: 0, nearby_search: 0, route_plan: 0, get_weather: 0 };
+      const labels = { search_notes: '📚 检索笔记', poi_search: '📍 查询地点', nearby_search: '🔎 周边搜索',
+        route_plan: '🧭 计算路线', get_weather: '🌤️ 查天气' };
+      let stage = '准备中';
+      let latest = '';
+      const render = () => {
+        const parts = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${labels[k]} ×${n}`);
+        bubble.textContent = `${stage}${latest ? `\n最近：${latest}` : ''}${parts.length ? `\n${parts.join('  ')}` : ''}`;
+        chatLogEl.scrollTo({ top: chatLogEl.scrollHeight, behavior: 'smooth' });
+      };
+      render();
+      return (event, data) => {
+        if (event === 'status') stage = data.message;
+        if (event === 'route') stage = `🔀 识别为：${data.route_cn}`;
+        if (event === 'tool_call') {
+          counts[data.tool] = (counts[data.tool] || 0) + 1;
+          if (data.brief) latest = `${labels[data.tool] || data.tool} ${data.brief}`;
+        }
+        if (event === 'validation') {
+          stage = data.passed ? '✅ 校验通过' : `🔧 校验发现 ${data.issues.length} 个问题，正在修正`;
+        }
+        render();
+      };
+    }
+
+    // 结构化行程 → 地图页的数据格式（坐标已由 Agent 校验，地图页无需再做地理编码）
+    function agentItineraryToMapJson(it) {
+      return {
+        title: it.title,
+        days: it.days.map(d => ({
+          title: d.theme || `第${d.day}天`,
+          city: it.city,
+          notes: null,
+          places: d.stops.filter(s => s.location).map(s => ({
+            name: s.name,
+            address: s.address || null,
+            location: { lng: s.location.lng, lat: s.location.lat, address: s.address || '', city: it.city },
+            type: s.category,
+            status: null,
+            notes: (s.tips || []).join('；') || null,
+            city: it.city
+          }))
+        }))
+      };
+    }
+
+    async function runAgentPlan(body) {
+      const onEvent = createProgressBubble();
+      const result = await callAgentStream({ ...body, user_id: USER_ID, session_id: SESSION_ID }, onEvent);
+      applyAgentPlan(result);
+      showMemoryUpdates(result.memory_updates);
+      return result;
+    }
+
+    // 把 Agent 规划结果写入状态与本地存储（首轮规划与聊天中的 plan 路由共用）
+    function applyAgentPlan(result) {
+      state.agentItinerary = result.itinerary;
+      state.itineraryText = result.text;
+      state.itineraryJson = agentItineraryToMapJson(result.itinerary);
+      try {
+        localStorage.setItem('wanderAi.itineraryText', result.text);
+        localStorage.setItem('wanderAi.itineraryJson', JSON.stringify(state.itineraryJson));
+        localStorage.setItem('wanderAi.itineraryTitle', result.itinerary.title || 'AI 行程');
+        localStorage.setItem('wanderAi.itinerarySource', 'agent');
+      } catch (_) {}
+      const v = result.validation || {};
+      const summary = `地点 ${v.stops_resolved}/${v.stops} 已匹配真实 POI · 路线 ${v.legs_verified}/${v.legs} 段经高德实算`
+        + (result.passed ? '' : ' · ⚠️ 部分问题未能自动修正');
+      appendMessage('system', `${summary}（${(result.latency_ms / 1000).toFixed(0)} 秒）`);
+      setMapButtonsEnabled(true);
+    }
+
+    // 聊天消息：服务端先路由，只有“规划/修改行程”才会改动行程，其余直接回答
+    async function runChat(text) {
+      const ctx = state.tripContext || {};
+      const onEvent = createProgressBubble();
+      const result = await callAgentStream({
+        message: text,
+        destination: ctx.destination || '',
+        days: ctx.days || null,
+        start_date: ctx.date || '',
+        preferences: ctx.preferenceLabels || [],
+        style_prompt: state.systemExtra || '',
+        previous_itinerary: state.agentItinerary || null,
+        user_id: USER_ID,
+        session_id: SESSION_ID
+      }, onEvent, '/api/chat/stream');
+      if (result.plan) applyAgentPlan(result.plan);
+      showMemoryUpdates(result.memory_updates);
+      return result;
+    }
+
+    // ---------------- 长期记忆 ----------------
+    function showMemoryUpdates(updates) {
+      (updates || []).forEach(u => {
+        if (u.action === 'pending') {
+          appendMessage('system', `🧠 先记下待确认：${u.key_cn} · ${u.value}（再提到一次会生效）`);
+        } else {
+          const verb = u.action === 'updated' ? '已更新' : u.action === 'confirmed' ? '已确认' : '已记住';
+          appendMessage('system', `🧠 ${verb}：${u.key_cn} · ${u.value}（可在“我的偏好”里删除）`);
+        }
+      });
+    }
+
+    async function memoryRequest(method, path) {
+      const resp = await fetch(`${API_BASE}${path}`, { method });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) throw new ApiError(data?.error?.message || `接口错误 ${resp.status}`, { code: data?.error?.code });
+      return data;
+    }
+
+    async function renderMemoryList() {
+      const list = document.getElementById('memoryList');
+      list.innerHTML = '';
+      let memories = [];
+      try {
+        memories = (await memoryRequest('GET', `/api/memory?user_id=${USER_ID}`)).memories || [];
+      } catch (e) {
+        const li = document.createElement('li');
+        li.textContent = '读取失败：' + describeError(e);
+        list.appendChild(li);
+        return;
+      }
+      if (!memories.length) {
+        const li = document.createElement('li');
+        li.textContent = '还没有记住任何偏好。';
+        list.appendChild(li);
+        return;
+      }
+      memories.forEach(m => {
+        const li = document.createElement('li');
+        const text = document.createElement('span');
+        text.className = 'memory-text';
+        text.textContent = `${m.key_cn} · ${m.value}`;
+        text.title = m.evidence ? `来自：“${m.evidence}”` : '';
+        li.appendChild(text);
+        if (m.status === 'pending') {
+          const tag = document.createElement('span');
+          tag.className = 'memory-pending';
+          tag.textContent = '待确认';
+          li.appendChild(tag);
+        }
+        const del = document.createElement('button');
+        del.textContent = '删除';
+        del.addEventListener('click', async () => {
+          await memoryRequest('DELETE', `/api/memory/${m.id}?user_id=${USER_ID}`);
+          await renderMemoryList();
+        });
+        li.appendChild(del);
+        list.appendChild(li);
+      });
+    }
+
+    async function openMemoryDialog() {
+      document.getElementById('memoryDialog').classList.add('active');
+      await renderMemoryList();
     }
 
     function buildMockPlan(destination, origin, dateStr, preferences) {
@@ -937,38 +1239,85 @@
         .map(item => item.modelLabel)
         .filter(Boolean);
 
-      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。请生成 2-3 天行程。`;
+      const days = Number(document.getElementById('field-days').value || 3);
+      const note = document.getElementById('field-note').value.trim();
+      const planRequest = `请为我规划从 ${origin || '未填写'} 前往 ${destination || '未填写'} 的行程，出发日期：${dateValue || '未填写'}，旅行偏好：${preferences.length ? preferences.join('、') : '未选择' }。${note ? `补充需求：${note}。` : ''}请生成 ${days} 天行程。`;
       appendMessage('user', planRequest);
 
       // 如果配置了 LLM，则优先请求真实模型；否则回退到本地示例
       const { ep } = getLLMSettings();
       try {
-        // 优先尝试调用本地分类器，为 LLM 增加强偏好约束
         let systemExtra = '';
+        let ragSnippets = '';
+        let detectedLabel = '';
+
         if (manualModelLabels.length) {
           const picked = manualModelLabels[0];
+          detectedLabel = picked;
           systemExtra = `${buildSystemPromptByLabel(picked)}\n（手动指定偏好类型：${picked}）`;
           appendMessage('system', `已按你手动选择的标签规划：${picked}`);
-        } else {
+        }
+
+        // 构造 RAG 检索 query
+        const ragQuery = [destination, origin, ...preferenceLabels].filter(Boolean).join(' ');
+
+        // 先分类（如果没手动选），再用识别出的标签做 RAG 检索；任一失败不阻塞
+        if (!manualModelLabels.length) {
+
           try {
-            const userDesc = `出发地：${origin || '未填写'}；目的地：${destination || '未填写'}；日期：${dateValue || '未填写'}；偏好：${(preferenceLabels || []).join('、') || '未选择'}`;
-            const cls = await callLocalClassifier(userDesc);
+            const cls = await callLocalClassifier({ destination, preferences: preferenceLabels, message: note });
             if (cls && cls.label) {
+              detectedLabel = cls.label;
               const styleHead = buildSystemPromptByLabel(cls.label);
               systemExtra = `${styleHead}\n（偏好类型：${cls.label}，置信度约${Math.round((cls.score || 0) * 100)}%）`;
-              if (DEBUG) console.log('[classify] applied label prompt', { label: cls.label, score: cls.score, systemExtra });
+              if (DEBUG) console.log('[classify] applied label prompt', { label: cls.label, score: cls.score });
               appendMessage('system', `偏好识别：${cls.label}（${Math.round((cls.score || 0) * 100)}%）`);
-            } else if (DEBUG) {
-              console.warn('[classify] no label in response', cls);
             }
           } catch (err) {
-            // 分类失败不影响主流程
-            if (DEBUG) console.warn('[classify] skipped, fallback to LLM-only prompt', err);
+            if (DEBUG) console.warn('[classify] skipped', err);
           }
         }
 
-        state.tripContext = { origin, destination, date: dateValue, preferences };
+        // Agent 规划：成功直接返回；失败回退到下面的“检索笔记 + 文本生成”流程
+        if (USE_AGENT && destination) {
+          try {
+            const result = await runAgentPlan({
+              destination, origin, days, start_date: dateValue,
+              preferences: preferenceLabels, style_prompt: systemExtra, message: note
+            });
+            state.tripContext = { origin, destination, date: dateValue, preferences, preferenceLabels, days };
+            state.systemExtra = systemExtra;
+            state.chatHistory = [{ role: 'user', content: planRequest }, { role: 'ai', content: result.text }];
+            appendMessage('ai', `【AI生成行程】\n${result.text}`);
+            setMapButtonsEnabled(true);
+            showToast('行程已生成（智能规划）');
+            return;
+          } catch (err) {
+            console.warn('[agent] failed, fallback to text generation', err);
+            appendMessage('system', `⚠️ 智能规划暂不可用（${describeError(err)}），改用快速生成`);
+          }
+        }
+
+        if (ragQuery.trim()) {
+          try {
+            const rag = await callRAGRetrieve(ragQuery, detectedLabel, 5);
+            if (rag && rag.hits && rag.hits.length) {
+              ragSnippets = formatRAGSnippets(rag.hits);
+              if (DEBUG) console.log('[rag] retrieved snippets count:', rag.hits.length);
+              appendMessage('system', `📚 已检索到 ${rag.hits.length} 条相关旅行笔记作为参考`);
+            } else if (DEBUG) {
+              console.warn('[rag] no hits');
+            }
+          } catch (err) {
+            if (DEBUG) console.warn('[rag] skipped', err);
+            appendMessage('system', '⚠️ 笔记检索暂不可用，本次行程未参考真实游记');
+          }
+        }
+
+        state.tripContext = { origin, destination, date: dateValue, preferences, preferenceLabels, days };
         state.systemExtra = systemExtra;
+        state.ragSnippets = ragSnippets;
+        state.agentItinerary = null;
         state.chatHistory = [{ role: 'user', content: planRequest }];
         trimChatHistory();
 
@@ -980,6 +1329,7 @@
             date: dateValue,
             preferences,
             systemExtra,
+            ragSnippets,
             chatHistory: state.chatHistory
           });
           state.itineraryText = text;
@@ -990,6 +1340,7 @@
           try {
             localStorage.setItem('wanderAi.itineraryText', text);
             if (title) localStorage.setItem('wanderAi.itineraryTitle', title);
+            localStorage.setItem('wanderAi.itinerarySource', 'text');
           } catch (_) {}
           setMapButtonsEnabled(true);
           showToast('行程已生成（LLM）');
@@ -997,7 +1348,7 @@
         }
       } catch (e) {
         console.error(e);
-        showToast('LLM 生成失败，已回退示例：' + (e.message || e), 'error');
+        showToast('AI 生成失败，已回退示例行程：' + describeError(e), 'error');
       }
 
       const plan = buildMockPlan(destination, origin, dateValue, preferences);
@@ -1016,23 +1367,53 @@
         showToast('请输入对话内容', 'error');
         return;
       }
-      if (!state.tripContext) {
-        showToast('请先点击“AI规划行程”创建首轮行程', 'error');
-        return;
-      }
-
       inputEl.value = '';
       appendMessage('user', text);
       state.chatHistory.push({ role: 'user', content: text });
       trimChatHistory();
 
+      // 动态路由：问答类消息直接回答，“修改行程”类才会改动行程
+      if (USE_AGENT && (state.agentItinerary || !state.tripContext)) {
+        try {
+          const result = await runChat(text);
+          state.chatHistory.push({ role: 'ai', content: result.answer });
+          trimChatHistory();
+          appendMessage('ai', result.answer);
+          return;
+        } catch (err) {
+          console.warn('[chat] failed, fallback', err);
+          if (!state.tripContext) {
+            showToast('对话失败：' + describeError(err), 'error');
+            return;
+          }
+          appendMessage('system', `⚠️ 智能对话暂不可用（${describeError(err)}），改用快速修改`);
+          state.agentItinerary = null;
+        }
+      }
+
       try {
+        // 多轮对话时也尝试 RAG 检索，用用户最新消息+目的地作为 query
+        let ragSnippets = state.ragSnippets || '';
+        try {
+          const multiRagQuery = `${state.tripContext.destination || ''} ${text}`.trim();
+          if (multiRagQuery) {
+            const ragData = await callRAGRetrieve(multiRagQuery, '', 3);
+            if (ragData && ragData.hits && ragData.hits.length) {
+              ragSnippets = formatRAGSnippets(ragData.hits);
+              if (DEBUG) console.log('[rag] multi-turn retrieved:', ragData.hits.length);
+            }
+          }
+        } catch (ragErr) {
+          if (DEBUG) console.warn('[rag] multi-turn retrieve skipped', ragErr);
+        }
+
         const { text: reply } = await callLLMItinerary({
           origin: state.tripContext.origin,
           destination: state.tripContext.destination,
           date: state.tripContext.date,
           preferences: state.tripContext.preferences,
           systemExtra: state.systemExtra,
+          ragSnippets,
           chatHistory: state.chatHistory
         });
         state.chatHistory.push({ role: 'ai', content: reply });
@@ -1041,10 +1422,11 @@
         appendMessage('ai', reply);
         try {
           localStorage.setItem('wanderAi.itineraryText', reply);
+          localStorage.setItem('wanderAi.itinerarySource', 'text');
         } catch (_) {}
       } catch (e) {
         console.error(e);
-        showToast('对话失败：' + (e.message || e), 'error');
+        showToast('对话失败：' + describeError(e), 'error');
       }
     }
 
@@ -1072,7 +1454,11 @@
       state.chatHistory = [];
       state.tripContext = null;
       state.systemExtra = '';
+      state.ragSnippets = '';
+      state.agentItinerary = null;
+      SESSION_ID = newId();  // 新会话；长期记忆不受影响，可在“我的偏好”里管理
       try {
+        localStorage.removeItem('wanderAi.itinerarySource');
         localStorage.removeItem('wanderAi.itineraryText');
         localStorage.removeItem('wanderAi.itineraryJson');
         localStorage.removeItem('wanderAi.itineraryTitle');
@@ -1099,6 +1485,16 @@
       showToast('手动线路功能即将上线，敬请期待！', 'error');
     });
     document.getElementById('clearChatBtn').addEventListener('click', clearConversation);
+    document.getElementById('memoryBtn').addEventListener('click', openMemoryDialog);
+    document.getElementById('memoryClose').addEventListener('click', () => {
+      document.getElementById('memoryDialog').classList.remove('active');
+    });
+    document.getElementById('memoryClear').addEventListener('click', async () => {
+      if (!window.confirm('确定清空全部长期记忆吗？')) return;
+      await memoryRequest('DELETE', `/api/memory?user_id=${USER_ID}`);
+      await renderMemoryList();
+      showToast('已清空长期记忆');
+    });
     document.getElementById('chatSendBtn').addEventListener('click', handleChatSend);
     viewMapButtons.forEach(btn => btn.addEventListener('click', handleViewMap));
     document.getElementById('chatInput').addEventListener('keydown', evt => {
@@ -1111,6 +1507,7 @@
     document.addEventListener('keydown', evt => {
       if (evt.key === 'Escape') {
         document.getElementById('prefDialog').classList.remove('active');
+        document.getElementById('memoryDialog').classList.remove('active');
       }
     });
 

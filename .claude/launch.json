@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wanderai",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3000,
+      "cwd": "D:\\gaode_test"
+    },
+    {
+      "name": "agent",
+      "runtimeExecutable": "D:\\gaode_test\\agent_service\\.venv-win\\Scripts\\python.exe",
+      "runtimeArgs": ["app.py"],
+      "port": 8002,
+      "cwd": "D:\\gaode_test\\agent_service"
+    }
+  ]
+}

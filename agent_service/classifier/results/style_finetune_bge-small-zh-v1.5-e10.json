@@ -1,0 +1,100 @@
+{
+ "val": {
+  "micro_f1": 0.829971181556196,
+  "macro_f1": 0.8233668451059756,
+  "exact_match": 0.6323529411764706,
+  "none_f1": 0.8387096774193549,
+  "per_label_f1": {
+   "food": 0.909,
+   "nature": 0.756,
+   "culture": 0.8,
+   "citywalk": 0.758,
+   "photo": 0.892,
+   "rush": 0.826
+  }
+ },
+ "test": {
+  "micro_f1": 0.7748251748251749,
+  "macro_f1": 0.7665442721688923,
+  "exact_match": 0.524,
+  "none_f1": 0.6666666666666666,
+  "per_label_f1": {
+   "food": 0.752,
+   "nature": 0.72,
+   "culture": 0.785,
+   "citywalk": 0.672,
+   "photo": 0.901,
+   "rush": 0.769
+  }
+ },
+ "thresholds": [
+  0.7,
+  0.6,
+  0.45,
+  0.5,
+  0.5,
+  0.5
+ ],
+ "best_epoch": 10,
+ "history": [
+  {
+   "epoch": 1,
+   "train_loss": 1.0422,
+   "val_main": 0.6223
+  },
+  {
+   "epoch": 2,
+   "train_loss": 0.7164,
+   "val_main": 0.7368
+  },
+  {
+   "epoch": 3,
+   "train_loss": 0.5863,
+   "val_main": 0.7805
+  },
+  {
+   "epoch": 4,
+   "train_loss": 0.5083,
+   "val_main": 0.7925
+  },
+  {
+   "epoch": 5,
+   "train_loss": 0.4589,
+   "val_main": 0.8101
+  },
+  {
+   "epoch": 6,
+   "train_loss": 0.4238,
+   "val_main": 0.8101
+  },
+  {
+   "epoch": 7,
+   "train_loss": 0.3912,
+   "val_main": 0.7945
+  },
+  {
+   "epoch": 8,
+   "train_loss": 0.3664,
+   "val_main": 0.8159
+  },
+  {
+   "epoch": 9,
+   "train_loss": 0.3537,
+   "val_main": 0.8136
+  },
+  {
+   "epoch": 10,
+   "train_loss": 0.3361,
+   "val_main": 0.8215
+  }
+ ],
+ "train_seconds": 354.4,
+ "latency_ms_p50": 8.3,
+ "model_mb": 95.9,
+ "task": "style",
+ "method": "finetune",
+ "base": "BAAI/bge-small-zh-v1.5",
+ "n_train": 1231,
+ "n_val": 136,
+ "n_test": 250
+}

@@ -1,0 +1,75 @@
+{
+ "val": {
+  "micro_f1": 0.8666666666666667,
+  "macro_f1": 0.8634284367412518,
+  "exact_match": 0.7205882352941176,
+  "none_f1": 0.9090909090909091,
+  "per_label_f1": {
+   "food": 0.925,
+   "nature": 0.829,
+   "culture": 0.87,
+   "citywalk": 0.814,
+   "photo": 0.873,
+   "rush": 0.87
+  }
+ },
+ "test": {
+  "micro_f1": 0.8047337278106509,
+  "macro_f1": 0.7975825131280554,
+  "exact_match": 0.604,
+  "none_f1": 0.8275862068965517,
+  "per_label_f1": {
+   "food": 0.8,
+   "nature": 0.8,
+   "culture": 0.792,
+   "citywalk": 0.691,
+   "photo": 0.914,
+   "rush": 0.789
+  }
+ },
+ "thresholds": [
+  0.75,
+  0.55,
+  0.75,
+  0.5,
+  0.5,
+  0.45
+ ],
+ "best_epoch": 3,
+ "history": [
+  {
+   "epoch": 1,
+   "train_loss": 0.8485,
+   "val_main": 0.7831
+  },
+  {
+   "epoch": 2,
+   "train_loss": 0.5445,
+   "val_main": 0.8056
+  },
+  {
+   "epoch": 3,
+   "train_loss": 0.4486,
+   "val_main": 0.8328
+  },
+  {
+   "epoch": 4,
+   "train_loss": 0.3692,
+   "val_main": 0.8182
+  },
+  {
+   "epoch": 5,
+   "train_loss": 0.3228,
+   "val_main": 0.8256
+  }
+ ],
+ "train_seconds": 2607.9,
+ "latency_ms_p50": 42.7,
+ "model_mb": 409.2,
+ "task": "style",
+ "method": "finetune",
+ "base": "hfl/chinese-roberta-wwm-ext",
+ "n_train": 1231,
+ "n_val": 136,
+ "n_test": 250
+}

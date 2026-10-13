@@ -1,5 +1,0 @@
-openai>=1.42.0
-paddlepaddle==2.6.1
-paddlenlp==2.6.1
-numpy
-

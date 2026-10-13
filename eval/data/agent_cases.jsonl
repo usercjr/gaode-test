@@ -1,0 +1,20 @@
+{"cid": "c01", "destination": "成都", "days": 2, "preferences": ["美食探店"], "message": ""}
+{"cid": "c02", "destination": "重庆", "days": 2, "preferences": ["拍照出片", "夜景"], "message": ""}
+{"cid": "c03", "destination": "西安", "days": 3, "preferences": ["深度文化"], "message": "带父母，节奏慢一点"}
+{"cid": "c04", "destination": "北京", "days": 3, "preferences": ["深度文化"], "message": "第一次去北京"}
+{"cid": "c05", "destination": "上海", "days": 1, "preferences": ["Citywalk"], "message": ""}
+{"cid": "c06", "destination": "广州", "days": 2, "preferences": ["美食探店"], "message": "想吃早茶"}
+{"cid": "c07", "destination": "厦门", "days": 2, "preferences": ["自然疗愈", "拍照出片"], "message": ""}
+{"cid": "c08", "destination": "贵阳", "days": 2, "preferences": ["美食探店"], "message": "预算有限"}
+{"cid": "c09", "destination": "昆明", "days": 2, "preferences": ["自然疗愈"], "message": ""}
+{"cid": "c10", "destination": "大理", "days": 2, "preferences": ["自然疗愈", "拍照出片"], "message": "不想太赶"}
+{"cid": "c11", "destination": "乌鲁木齐", "days": 1, "preferences": ["美食探店"], "message": ""}
+{"cid": "c12", "destination": "长沙", "days": 2, "preferences": ["美食探店", "夜景"], "message": ""}
+{"cid": "c13", "destination": "深圳", "days": 1, "preferences": ["Citywalk"], "message": "带小孩"}
+{"cid": "c14", "destination": "泉州", "days": 2, "preferences": ["深度文化"], "message": ""}
+{"cid": "c15", "destination": "杭州", "days": 2, "preferences": ["自然疗愈"], "message": "想去西湖"}
+{"cid": "c16", "destination": "南京", "days": 2, "preferences": ["深度文化"], "message": ""}
+{"cid": "c17", "destination": "苏州", "days": 1, "preferences": ["Citywalk", "拍照出片"], "message": ""}
+{"cid": "c18", "destination": "青岛", "days": 2, "preferences": ["美食探店", "自然疗愈"], "message": ""}
+{"cid": "c19", "destination": "天津", "days": 1, "preferences": ["特种兵打卡"], "message": "一天打卡尽量多"}
+{"cid": "c20", "destination": "武汉", "days": 2, "preferences": ["美食探店"], "message": "大学生穷游"}

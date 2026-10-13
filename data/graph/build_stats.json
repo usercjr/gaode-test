@@ -1,0 +1,20 @@
+{
+ "prepared": {
+  "mentions_linked": 762,
+  "rejected_type": 204,
+  "skip_not_found": 215,
+  "skip_generic": 5
+ },
+ "graph": {
+  "POI": 465,
+  "City": 30,
+  "Tag": 18,
+  "Note": 156,
+  "NEAR": 848,
+  "LOCATED_IN": 465,
+  "HAS_TAG": 551,
+  "MENTIONS": 761,
+  "CO_MENTIONED": 1813
+ },
+ "branch_guess_pois": 58
+}
