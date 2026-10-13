@@ -91,13 +91,16 @@ class PlanAgent:
         nudges = 0
 
         submitted = False
+        last_valid: Optional[ValidationResult] = None  # 最近一次结构合法的提交，用于步数耗尽时兜底
         for step in range(1, self.cfg.max_steps + 1):
             await emit("status", {"stage": "thinking", "message": f"第 {step} 轮规划"})
-            # 预算保护：剩余轮数只够“提交 + 修正”时，强制模型提交，避免信息收集耗尽步数
+            # 预算保护：剩余轮数只够“提交 + 剩余修正”时强制提交。
+            # 按剩余修正次数计算，所以提交失败后模型又去调别的工具时，也会被拉回来重新提交
             steps_left = self.cfg.max_steps - step + 1
-            force_submit = not submitted and steps_left <= self.cfg.max_fix_rounds + 1
+            force_submit = steps_left <= (self.cfg.max_fix_rounds - fix_rounds) + 1
             if force_submit:
-                messages.append({"role": "user", "content": "信息已经足够，请立即调用 submit_itinerary 提交行程。"})
+                messages.append({"role": "user", "content": "请根据以上问题修正后立即调用 submit_itinerary 重新提交。"
+                                 if submitted else "信息已经足够，请立即调用 submit_itinerary 提交行程。"})
             resp = await self.llm.complete(
                 messages, tools=tool_defs(PLAN_TOOLS), temperature=self.cfg.temperature, purpose="agent.plan",
                 tool_choice={"type": "function", "function": {"name": SUBMIT_TOOL}} if force_submit else None,
@@ -138,6 +141,8 @@ class PlanAgent:
                 result = await self.validator.check(_safe_args(c), ctx, days)
                 if first_result is None:
                     first_result = result
+                if result.itinerary is not None:
+                    last_valid = result
                 await emit("validation", {"passed": result.passed, "issues": result.issues[:10],
                                           "round": fix_rounds})
                 if result.passed or fix_rounds >= self.cfg.max_fix_rounds:
@@ -152,6 +157,10 @@ class PlanAgent:
             if final is not None:
                 break
 
+        if final is None and last_valid is not None:
+            # 步数用完但有过结构合法的提交：带着未解决的问题返回，而不是让用户什么都拿不到
+            log.warning("plan finished with unresolved issues", extra={"issues": last_valid.issues[:5]})
+            final = last_valid
         if final is None or final.itinerary is None:
             raise AppError(ErrorCode.PLAN_INVALID, "规划未能在限定步数内完成，请简化需求后重试",
                            detail={"steps": step, "fix_rounds": fix_rounds})

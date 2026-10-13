@@ -165,3 +165,21 @@ def test_budget_guard_forces_submit_before_steps_run_out():
     assert result.passed
     assert llm.kwargs[0].get("tool_choice") is None and llm.kwargs[1].get("tool_choice") is None
     assert llm.kwargs[2]["tool_choice"]["function"]["name"] == "submit_itinerary"
+
+
+def test_failed_submit_then_drifting_is_forced_to_resubmit_and_returns_with_warnings():
+    """回归：提交未通过后模型又去调别的工具，步数耗尽前应被强制重新提交；仍不通过则带 warnings 返回而不是报错。"""
+    bad = {"title": "t", "city": "成都", "days": [{"day": 1, "stops": [_stop("P1"), _stop("XX", "不存在的店")]}]}
+    search = lambda cid, kw: {"content": "", "tool_calls": [_tool_call(cid, "poi_search", {"keyword": kw})]}
+    llm = RecordingLLM([
+        search("a", "宽窄巷子"),
+        {"content": "", "tool_calls": [_tool_call("s1", "submit_itinerary", bad)]},
+        search("b", "人民公园"),                                                   # 提交失败后跑去搜别的
+        {"content": "", "tool_calls": [_tool_call("s2", "submit_itinerary", bad)]},  # 被强制重新提交
+    ])
+    amap = FakeAmap()
+    cfg = AgentConfig(max_steps=4, max_fix_rounds=1)
+    result = asyncio.run(PlanAgent(llm, amap, ToolExecutor(amap, retriever=None), cfg).plan(
+        PlanRequest(destination="成都", days=1)))
+    assert llm.kwargs[3]["tool_choice"]["function"]["name"] == "submit_itinerary"
+    assert not result.passed and any("不存在的店" in w for w in result.itinerary["warnings"])

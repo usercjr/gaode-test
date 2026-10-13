@@ -101,3 +101,40 @@ def test_spatial_question_uses_tool_qa_with_itinerary_pois():
     out = asyncio.run(router.handle(ChatRequest(message="宽窄巷子附近有什么吃的", previous_itinerary=PREV)))
     assert out["route"] == "graph_qa" and "推荐" in out["answer"]
     assert llm.purposes == ["chat.tool_qa"]
+
+
+def test_router_injects_memory_and_returns_updates(tmp_path):
+    from memory.service import MemoryService
+    from memory.store import MemoryStore
+
+    class MemLLM(FakeLLM):
+        async def chat(self, messages, **kw):
+            if kw.get("purpose") == "memory.extract":
+                return '{"memories": [{"key": "mobility", "value": "不能爬山", "evidence": "不能爬山", "confidence": 0.9}]}'
+            return await super().chat(messages, **kw)
+
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.upsert("u1", "diet", "不吃辣", 0.9)
+    llm, rag, agent, amap = MemLLM(), FakeRag(), FakeAgent(), FakeAmap()
+    router = ChatRouter(FakeClassifier("plan"), llm, rag, agent, ToolExecutor(amap, retriever=None), amap,
+                        MemoryService(store, llm))
+    out = asyncio.run(router.handle(ChatRequest(message="我爸不能爬山，第二天换一下", previous_itinerary=PREV,
+                                                user_id="u1", session_id="s1")))
+    assert agent.requests[0].memory == ["饮食：不吃辣"]  # 规划时带上已有长期记忆
+    assert out["memory_updates"][0]["value"] == "不能爬山"  # 本轮新学到的记忆
+    assert [t["role"] for t in store.turns("s1")] == ["user", "assistant"]
+
+
+def test_destination_inferred_from_conversation_when_no_trip(tmp_path):
+    from memory.service import MemoryService
+    from memory.store import MemoryStore
+    from rag.metadata import PlaceMatcher
+
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.add_turn("s1", "u1", "user", "这次去成都想吃火锅")
+    llm, rag, agent, amap = FakeLLM(), FakeRag(), FakeAgent(), FakeAmap()
+    rag.retriever = type("R", (), {"matcher": PlaceMatcher(["成都", "重庆"])})()
+    router = ChatRouter(FakeClassifier("graph_qa"), llm, rag, agent, ToolExecutor(amap, retriever=None), amap,
+                        MemoryService(store, llm))
+    out = asyncio.run(router.handle(ChatRequest(message="宽窄巷子附近有什么吃的", user_id="u1", session_id="s1")))
+    assert "推荐" in out["answer"]  # 识别出成都后走工具问答，而不是反问城市

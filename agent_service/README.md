@@ -34,6 +34,11 @@ agent_service/
 │  ├─ schemas.py        # 结构化行程（Pydantic）
 │  ├─ prompts.py        # 系统提示词
 │  └─ render.py         # 结构化行程 → 聊天文本
+├─ memory/
+│  ├─ store.py          # SQLite：长期记忆（固定键、覆盖/去重/待确认规则）、会话轮次、会话摘要
+│  ├─ extractor.py      # LLM 提候选 + 确定性过滤（证据须出自原话、敏感信息丢弃）
+│  ├─ session.py        # 最近几轮 + 滚动摘要；指代追问改写成独立问题
+│  └─ service.py        # 给路由与规划用的门面
 ├─ classifier/
 │  ├─ labels.py         # 标签体系 + 统一输入格式（训练/推理/评测共用）
 │  ├─ model.py          # 编码器 + 线性头；Predictor 推理
@@ -120,6 +125,8 @@ cd D:\gaode_test\agent_service
 | POST | `/plan/stream` | 同上，SSE 推送 `status` / `tool_call` / `validation` 进度，最后 `done` 或 `error` |
 | POST | `/chat` | 聊天消息：先路由（plan / notes_qa / graph_qa / realtime / chitchat）再处理 `{message, destination, previous_itinerary, ...}` |
 | POST | `/chat/stream` | 同上，SSE 推送 `route` / `tool_call` / `status` 事件 |
+| GET | `/memory?user_id=` | 查看长期记忆（生效 + 待确认） |
+| DELETE | `/memory/{id}?user_id=` / `/memory?user_id=` | 删除一条 / 清空 |
 | POST | `/itinerary` | 文本行程生成（旧流程，Agent 不可用时前端回退使用）`{messages, temperature}` → `{text, model}` |
 | POST | `/ingest/csv` | 入库（仅本机，`csv_path` 必须位于 `data/` 内；不经网关暴露） |
 
@@ -159,6 +166,19 @@ cd D:\gaode_test\agent_service
 | chitchat | 直接简短回复 | — |
 
 路由由本地 RoBERTa 路由模型判定，模型缺失时退回 LLM 零样本。评测：`eval/run_router_eval.py`，报告 `eval/router_report.md`。
+
+## 记忆
+
+| 层 | 内容 | 存储 |
+|---|---|---|
+| 长期记忆 | 同行人、行动限制、预算、节奏、常住城市（单值）；饮食、喜欢、不喜欢（多值） | SQLite `memories` |
+| 会话摘要 | 未摘要轮数超过 10 时，把除最近 6 轮外的内容压缩成固定字段摘要（后台执行） | SQLite `summaries` |
+| 最近对话 | 最近 6 轮原文 | SQLite `turns` |
+
+写入规则：只记用户明确说出的、可复用的、稳定的信息；证据必须是原话子串；敏感信息丢弃；
+置信度 < 0.7 先进“待确认”，再次提到才生效；单值键新值覆盖旧值（低置信度不能推翻已确认值）；“不喜欢 X”覆盖“喜欢 X”。
+读取：规划与工具问答时注入生效的长期记忆；含指代或很短的追问先结合上下文改写成独立问题再路由。
+记忆按前端生成的匿名 `user_id` 隔离（没有登录体系，仅适合演示）。评测：`eval/run_memory_eval.py`。
 
 ## 意图分类
 

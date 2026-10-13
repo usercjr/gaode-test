@@ -57,6 +57,10 @@ class PlanRequest(BaseModel):
     style_prompt: str = Field("", max_length=2000, description="前端风格标签对应的写作要求")
     message: str = Field("", max_length=2000, description="用户的补充需求或多轮修改意见")
     previous_itinerary: Optional[Itinerary] = None
+    user_id: str = Field("", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
+    session_id: str = Field("", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
+    # 由服务端根据 user_id 读取的长期记忆填充，客户端传入会被覆盖
+    memory: List[str] = Field(default_factory=list, max_length=30)
 
 
 class ChatRequest(BaseModel):
@@ -69,3 +73,5 @@ class ChatRequest(BaseModel):
     preferences: List[str] = Field(default_factory=list, max_length=20)
     style_prompt: str = Field("", max_length=2000)
     previous_itinerary: Optional[Itinerary] = None
+    user_id: str = Field("", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
+    session_id: str = Field("", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")

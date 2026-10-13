@@ -32,6 +32,8 @@ from rag.ingest import load_csv_records
 from rag.pipeline import RagPipeline
 from rag.retriever import Retriever
 from rag.store import VectorStore
+from memory.service import MemoryService
+from memory.store import MemoryStore
 
 settings = get_settings()
 setup_logging(settings.logging.level, settings.logging.dir, settings.logging.retention_days)
@@ -47,6 +49,7 @@ class Services:
     agent: PlanAgent
     classifier: ClassifierService
     router: ChatRouter
+    memory: Optional[MemoryService]
 
 
 services = Services()
@@ -67,8 +70,10 @@ async def lifespan(_app: FastAPI):
     services.amap = AmapClient(settings)
     executor = ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k)
     services.agent = PlanAgent(services.llm, services.amap, executor, settings.agent)
+    services.memory = (MemoryService(MemoryStore(settings.memory.db_path), services.llm)
+                       if settings.memory.enabled else None)
     services.router = ChatRouter(services.classifier, services.llm, services.rag, services.agent, executor,
-                                 services.amap)
+                                 services.amap, services.memory)
     if not settings.amap_enabled:
         log.warning("AMAP_WEB_SERVICE_KEY is not set; /plan will fail")
     # 预加载 embedding 模型、向量库、BM25 索引和重排模型，避免首个请求因冷启动超时；
@@ -85,6 +90,8 @@ async def lifespan(_app: FastAPI):
     yield
     await services.llm.aclose()
     await services.amap.aclose()
+    if services.memory:
+        services.memory.store.close()
 
 
 app = FastAPI(title="WanderAI Agent Service", version="0.2.0", lifespan=lifespan)
@@ -296,10 +303,62 @@ async def itinerary(req: ItineraryRequest):
     return {"text": text, "model": services.llm.default_model}
 
 
+async def _plan_with_memory(req: PlanRequest, emit=None) -> dict:
+    """规划前注入该用户的长期记忆；同时从“补充需求”里学习新记忆，并把这轮记入会话。"""
+    mem = services.memory
+    learn_task = None
+    if mem and req.user_id:
+        req.memory = mem.prompt_lines(req.user_id)  # 覆盖客户端传入的值
+        if req.message.strip():
+            learn_task = asyncio.create_task(mem.learn(req.user_id, req.message, "plan_form"))
+    else:
+        req.memory = []
+    result = (await services.agent.plan(req, emit) if emit else await services.agent.plan(req)).to_dict()
+    if mem:
+        mem.record(req.session_id, req.user_id, "user",
+                   f"规划 {req.destination} {req.days or ''} 天。{req.message}".strip(), "plan")
+        mem.record(req.session_id, req.user_id, "assistant", result["text"], "plan")
+    if learn_task is not None:
+        try:
+            result["memory_updates"] = await learn_task
+        except Exception:
+            log.exception("memory learning failed")
+            result["memory_updates"] = []
+    result["memory_used"] = req.memory
+    return result
+
+
+def _require_memory(user_id: str) -> MemoryService:
+    if services.memory is None:
+        raise AppError(ErrorCode.NOT_FOUND, "记忆功能未开启")
+    if not user_id or len(user_id) > 64 or not all(c.isalnum() or c in "_-" for c in user_id):
+        raise AppError(ErrorCode.BAD_REQUEST, "缺少或非法的 user_id")
+    return services.memory
+
+
+@app.get("/memory")
+async def list_memory(user_id: str):
+    """查看该用户的长期记忆（active 与待确认 pending）。"""
+    return {"memories": _require_memory(user_id).list(user_id)}
+
+
+@app.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: int, user_id: str):
+    deleted = _require_memory(user_id).store.delete(user_id, memory_id)
+    if not deleted:
+        raise AppError(ErrorCode.NOT_FOUND, "记忆不存在")
+    return {"deleted": deleted}
+
+
+@app.delete("/memory")
+async def clear_memory(user_id: str):
+    return {"deleted": _require_memory(user_id).store.delete(user_id)}
+
+
 @app.post("/plan")
 async def plan(req: PlanRequest):
     """Agent 规划（一次性返回）。"""
-    return (await services.agent.plan(req)).to_dict()
+    return await _plan_with_memory(req)
 
 
 def _sse(event: str, data) -> str:
@@ -347,7 +406,7 @@ async def plan_stream(req: PlanRequest):
     """Agent 规划（SSE 流式）：status / tool_call / validation 进度事件，最后 done 或 error。"""
 
     async def job(emit):
-        return (await services.agent.plan(req, emit)).to_dict()
+        return await _plan_with_memory(req, emit)
 
     return _sse_response(job, "plan")
 

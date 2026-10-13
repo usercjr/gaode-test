@@ -27,6 +27,9 @@ SYSTEM_PROMPT = """你是资深旅行规划师，通过调用工具为用户制�
 
 def build_system_prompt(req: PlanRequest, days: int, max_leg: int) -> str:
     style = f"\n## 风格要求\n{req.style_prompt.strip()}" if req.style_prompt.strip() else ""
+    if req.memory:
+        style += ("\n## 用户长期偏好与约束（来自记忆，必须遵守；与本次要求冲突时以本次为准）\n"
+                  + "\n".join(f"- {m}" for m in req.memory))
     return SYSTEM_PROMPT.format(dest=req.destination, days=days, max_leg=max_leg, style=style)
 
 

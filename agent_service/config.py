@@ -74,6 +74,11 @@ class AgentConfig(BaseModel):
     temperature: float = Field(0.4, ge=0.0, le=1.5)
 
 
+class MemoryConfig(BaseModel):
+    db_path: Path = Path("data/memory.sqlite3")  # 长期记忆与会话记录（不入库）
+    enabled: bool = True
+
+
 class ClassifierConfig(BaseModel):
     models_dir: Path = Path("agent_service/models")
     style_model: str = "style_chinese-roberta-wwm-ext"  # 目录不存在时自动退回 LLM 零样本
@@ -114,6 +119,7 @@ class Settings(BaseSettings):
     amap: AmapConfig = AmapConfig()
     agent: AgentConfig = AgentConfig()
     classifier: ClassifierConfig = ClassifierConfig()
+    memory: MemoryConfig = MemoryConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 
@@ -142,6 +148,7 @@ class Settings(BaseSettings):
             (self.rag, "data_dir"),
             (self.retrieval, "metadata_path"),
             (self.classifier, "models_dir"),
+            (self.memory, "db_path"),
             (self.logging, "dir"),
         ):
             path = getattr(section, attr)

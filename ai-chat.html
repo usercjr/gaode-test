@@ -397,6 +397,13 @@
       box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
     }
 
+    .memory-hint { color: var(--muted, #64748b); font-size: 13px; margin: 0 0 12px; }
+    .memory-list { list-style: none; padding: 0; margin: 0 0 16px; max-height: 50vh; overflow: auto; }
+    .memory-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.25); }
+    .memory-list .memory-text { flex: 1; font-size: 14px; }
+    .memory-list .memory-pending { font-size: 12px; color: #b45309; }
+    .memory-list button { border: none; background: none; color: #dc2626; cursor: pointer; font-size: 13px; }
+
     .dialog-actions {
       display: flex;
       justify-content: flex-end;
@@ -491,6 +498,7 @@
       <div class="chat-log" id="chatLog"></div>
       <div class="chat-toolbar">
         <button class="btn-link" id="clearChatBtn">清空会话</button>
+        <button class="btn-link" id="memoryBtn">🧠 我的偏好</button>
         <div class="chat-actions">
           <button class="btn-ghost" id="secondaryMapBtn">查看地图</button>
         </div>
@@ -509,6 +517,18 @@
       <div class="dialog-actions">
         <button class="btn-ghost" id="prefCancel">取消</button>
         <button class="btn-primary" id="prefConfirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pref-dialog" id="memoryDialog">
+    <div class="pref-content">
+      <h3>我的偏好（长期记忆）</h3>
+      <p class="memory-hint">从你说过的话里记下的长期偏好，会在以后规划时自动考虑。“待确认”的条目需要你再提到一次才会生效。</p>
+      <ul class="memory-list" id="memoryList"></ul>
+      <div class="dialog-actions">
+        <button class="btn-ghost" id="memoryClear">全部清空</button>
+        <button class="btn-primary" id="memoryClose">关闭</button>
       </div>
     </div>
   </div>
@@ -601,6 +621,19 @@
 
     // 统一的 API 基址，确保从任何入口打开页面都能命中同源代理
     const API_BASE = window.location.origin;
+
+    // 匿名用户 ID（长期记忆按它区分，存在本浏览器）与会话 ID（清空会话时重置）
+    function newId() {
+      return (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
+    }
+    const USER_ID = (() => {
+      try {
+        let id = localStorage.getItem('wanderAi.userId');
+        if (!id) { id = newId(); localStorage.setItem('wanderAi.userId', id); }
+        return id;
+      } catch (_) { return newId(); }
+    })();
+    let SESSION_ID = newId();
     // 调试日志：页面地址加 ?debug 开启
     const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
@@ -963,8 +996,9 @@
 
     async function runAgentPlan(body) {
       const onEvent = createProgressBubble();
-      const result = await callAgentStream(body, onEvent);
+      const result = await callAgentStream({ ...body, user_id: USER_ID, session_id: SESSION_ID }, onEvent);
       applyAgentPlan(result);
+      showMemoryUpdates(result.memory_updates);
       return result;
     }
 
@@ -997,10 +1031,79 @@
         start_date: ctx.date || '',
         preferences: ctx.preferenceLabels || [],
         style_prompt: state.systemExtra || '',
-        previous_itinerary: state.agentItinerary || null
+        previous_itinerary: state.agentItinerary || null,
+        user_id: USER_ID,
+        session_id: SESSION_ID
       }, onEvent, '/api/chat/stream');
       if (result.plan) applyAgentPlan(result.plan);
+      showMemoryUpdates(result.memory_updates);
       return result;
+    }
+
+    // ---------------- 长期记忆 ----------------
+    function showMemoryUpdates(updates) {
+      (updates || []).forEach(u => {
+        if (u.action === 'pending') {
+          appendMessage('system', `🧠 先记下待确认：${u.key_cn} · ${u.value}（再提到一次会生效）`);
+        } else {
+          const verb = u.action === 'updated' ? '已更新' : u.action === 'confirmed' ? '已确认' : '已记住';
+          appendMessage('system', `🧠 ${verb}：${u.key_cn} · ${u.value}（可在“我的偏好”里删除）`);
+        }
+      });
+    }
+
+    async function memoryRequest(method, path) {
+      const resp = await fetch(`${API_BASE}${path}`, { method });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) throw new ApiError(data?.error?.message || `接口错误 ${resp.status}`, { code: data?.error?.code });
+      return data;
+    }
+
+    async function renderMemoryList() {
+      const list = document.getElementById('memoryList');
+      list.innerHTML = '';
+      let memories = [];
+      try {
+        memories = (await memoryRequest('GET', `/api/memory?user_id=${USER_ID}`)).memories || [];
+      } catch (e) {
+        const li = document.createElement('li');
+        li.textContent = '读取失败：' + describeError(e);
+        list.appendChild(li);
+        return;
+      }
+      if (!memories.length) {
+        const li = document.createElement('li');
+        li.textContent = '还没有记住任何偏好。';
+        list.appendChild(li);
+        return;
+      }
+      memories.forEach(m => {
+        const li = document.createElement('li');
+        const text = document.createElement('span');
+        text.className = 'memory-text';
+        text.textContent = `${m.key_cn} · ${m.value}`;
+        text.title = m.evidence ? `来自：“${m.evidence}”` : '';
+        li.appendChild(text);
+        if (m.status === 'pending') {
+          const tag = document.createElement('span');
+          tag.className = 'memory-pending';
+          tag.textContent = '待确认';
+          li.appendChild(tag);
+        }
+        const del = document.createElement('button');
+        del.textContent = '删除';
+        del.addEventListener('click', async () => {
+          await memoryRequest('DELETE', `/api/memory/${m.id}?user_id=${USER_ID}`);
+          await renderMemoryList();
+        });
+        li.appendChild(del);
+        list.appendChild(li);
+      });
+    }
+
+    async function openMemoryDialog() {
+      document.getElementById('memoryDialog').classList.add('active');
+      await renderMemoryList();
     }
 
     function buildMockPlan(destination, origin, dateStr, preferences) {
@@ -1353,6 +1456,7 @@
       state.systemExtra = '';
       state.ragSnippets = '';
       state.agentItinerary = null;
+      SESSION_ID = newId();  // 新会话；长期记忆不受影响，可在“我的偏好”里管理
       try {
         localStorage.removeItem('wanderAi.itinerarySource');
         localStorage.removeItem('wanderAi.itineraryText');
@@ -1381,6 +1485,16 @@
       showToast('手动线路功能即将上线，敬请期待！', 'error');
     });
     document.getElementById('clearChatBtn').addEventListener('click', clearConversation);
+    document.getElementById('memoryBtn').addEventListener('click', openMemoryDialog);
+    document.getElementById('memoryClose').addEventListener('click', () => {
+      document.getElementById('memoryDialog').classList.remove('active');
+    });
+    document.getElementById('memoryClear').addEventListener('click', async () => {
+      if (!window.confirm('确定清空全部长期记忆吗？')) return;
+      await memoryRequest('DELETE', `/api/memory?user_id=${USER_ID}`);
+      await renderMemoryList();
+      showToast('已清空长期记忆');
+    });
     document.getElementById('chatSendBtn').addEventListener('click', handleChatSend);
     viewMapButtons.forEach(btn => btn.addEventListener('click', handleViewMap));
     document.getElementById('chatInput').addEventListener('keydown', evt => {
@@ -1393,6 +1507,7 @@
     document.addEventListener('keydown', evt => {
       if (evt.key === 'Escape') {
         document.getElementById('prefDialog').classList.remove('active');
+        document.getElementById('memoryDialog').classList.remove('active');
       }
     });
 

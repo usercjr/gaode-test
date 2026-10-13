@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-13（P5 动态路由完成后）
+> **文档更新时间：** 2026-10-13（P6 记忆完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -14,7 +14,8 @@
 
 1. **旅行规划（Agent）**：本地微调模型识别风格（多标签，缺模型时退回 LLM）→ Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
 2. **聊天（动态路由）**：聊天框消息先由路由模型判断类型——修改行程才交给 Agent，经验问答走 RAG，“附近 / 顺不顺路”走周边搜索与路线工具，天气与交通时长走实时工具，闲聊直接回复；只有“修改行程”会改动行程。
-3. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
+3. **记忆**：长期记忆（同行人、饮食、行动限制、预算、节奏、喜好等，按匿名 user_id 存储）在规划与问答时作为约束注入；会话保留最近几轮原文 + 滚动摘要，含指代的追问先改写成独立问题。用户可在“我的偏好”里查看和删除。
+4. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
 
@@ -66,7 +67,7 @@
 
 - **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。
 - **request-id**：沿用前端/调用方传入的 `X-Request-ID`，否则生成；透传给 `agent_service` 并写入响应头。
-- **转发**：`/api/chat`、`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream`、`/api/chat/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
+- **转发**：`/api/memory`（GET / DELETE）、`/api/chat`、`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream`、`/api/chat/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
 - **高德代理**：`GET /api/amap/{place-text|geocode|driving|walking}`，白名单接口，服务端追加 Key；高德业务错误（`status:"0"`）会记录日志。
 - **就绪检查**：`GET /api/readyz` 汇总网关与 `agent_service` 的依赖状态。
 - **启动校验**：端口、`AGENT_BASE` 非法时直接退出；未配置高德 Key 时告警。
@@ -111,6 +112,14 @@ RAG 调试页：展示意图、改写查询、召回数、答案（含降级说�
 - `data/*-cache.json`、`example/`、`src/parser.js`、`src/toAmapJson.js`：早期离线流程（`npm run generate:amap`）。
 
 ---
+
+### 4.7 记忆（`agent_service/memory/`）
+
+- 存储：SQLite `data/memory.sqlite3`（不入库），三张表：长期记忆、会话轮次、会话摘要。
+- 抽取：LLM 提候选，规则把关——固定 8 个键；证据必须出自用户原话；手机号/证件号/邮箱/卡号丢弃；低置信度先“待确认”，再次提到才生效；单值键新值覆盖旧值，“不喜欢 X”覆盖“喜欢 X”。
+- 使用：规划提示词加入“用户长期偏好与约束”；工具问答带上偏好；短追问结合上下文改写。
+- 抽取与回答并行执行，不增加回复延迟；摘要在后台执行。
+- 限制：没有登录体系，user_id 是浏览器本地生成的匿名 ID，仅适合演示。评测见 `eval/memory_report.md`。
 
 ## 五、配置
 

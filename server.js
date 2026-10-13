@@ -160,6 +160,13 @@ app.post('/api/plan', proxyToAgent('/plan', config.timeouts.agentPlan));
 app.post('/api/plan/stream', streamFromAgent('/plan/stream', config.timeouts.agentPlan));
 app.post('/api/chat', proxyToAgent('/chat', config.timeouts.agentPlan));
 app.post('/api/chat/stream', streamFromAgent('/chat/stream', config.timeouts.agentPlan));
+// 长期记忆的查看与删除：转发 user_id 查询参数与记忆 id
+app.get('/api/memory', (req, res) => proxyToAgent(`/memory?${new URLSearchParams({ user_id: String(req.query.user_id || '') })}`)(req, res));
+app.delete('/api/memory', (req, res) => proxyToAgent(`/memory?${new URLSearchParams({ user_id: String(req.query.user_id || '') })}`)(req, res));
+app.delete('/api/memory/:id', (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return sendError(res, 'BAD_REQUEST', '记忆 id 不合法');
+  proxyToAgent(`/memory/${req.params.id}?${new URLSearchParams({ user_id: String(req.query.user_id || '') })}`)(req, res);
+});
 app.post('/api/classify', proxyToAgent('/classify'));
 app.post('/api/itinerary', proxyToAgent('/itinerary', config.timeouts.agentLong));
 app.post('/api/rag/search', proxyToAgent('/search', config.timeouts.agentLong));

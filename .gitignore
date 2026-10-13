@@ -9,3 +9,4 @@ agent_service/chroma_db/
 agent_service/.venv-win/
 logs/
 agent_service/models/
+data/memory.sqlite3

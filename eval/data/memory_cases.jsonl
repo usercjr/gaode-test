@@ -1,0 +1,18 @@
+{"cid": "m01", "messages": ["我平时不吃辣，这次去成都"], "expect": [{"key": "diet", "any": ["辣"]}]}
+{"cid": "m02", "messages": ["带我爸妈一起去，他们腿脚不太好"], "expect": [{"key": "companion", "any": ["爸妈", "父母"]}, {"key": "mobility", "any": ["腿脚"]}]}
+{"cid": "m03", "messages": ["这次想吃火锅"], "expect": []}
+{"cid": "m04", "messages": ["我是学生党，预算比较紧"], "expect": [{"key": "budget", "any": ["学生", "预算", "紧", "低"]}]}
+{"cid": "m05", "messages": ["我手机号是13812345678，帮我记一下"], "expect": [], "sensitive": true}
+{"cid": "m06", "messages": ["我住在杭州，周末经常出去玩"], "expect": [{"key": "home_city", "any": ["杭州"]}]}
+{"cid": "m07", "messages": ["我讨厌人挤人的网红景点"], "expect": [{"key": "dislikes", "any": ["网红", "人挤人", "人多"]}]}
+{"cid": "m08", "messages": ["第二天轻松点"], "expect": []}
+{"cid": "m09", "messages": ["我对海鲜过敏"], "expect": [{"key": "diet", "any": ["海鲜"]}]}
+{"cid": "m10", "messages": ["我喜欢逛博物馆", "其实我不喜欢博物馆，太闷了"], "expect": [{"key": "dislikes", "any": ["博物馆"]}], "forbid": [{"key": "likes", "any": ["博物馆"]}]}
+{"cid": "m11", "messages": ["你推荐的太棒了，谢谢"], "expect": []}
+{"cid": "m12", "messages": ["我喜欢慢慢逛，不喜欢一天赶好几个景点"], "expect": [{"key": "pace", "any": ["慢"]}]}
+{"cid": "m13", "messages": ["我是素食者"], "expect": [{"key": "diet", "any": ["素"]}]}
+{"cid": "m14", "messages": ["我身份证号是11010119900307123X，订票要用"], "expect": [], "sensitive": true}
+{"cid": "m15", "messages": ["明天想去宽窄巷子看看"], "expect": []}
+{"cid": "m16", "messages": ["带着5岁的孩子，还推着婴儿车"], "expect": [{"key": "companion", "any": ["孩子", "娃"]}, {"key": "mobility", "any": ["婴儿车"]}]}
+{"cid": "m17", "messages": ["我一般和女朋友一起出去玩", "以后都是带爸妈出去了"], "expect": [{"key": "companion", "any": ["爸妈", "父母"]}], "forbid": [{"key": "companion", "any": ["女朋友"]}]}
+{"cid": "m18", "messages": ["我比较喜欢夜市和小吃街"], "expect": [{"key": "likes", "any": ["夜市", "小吃"]}]}
