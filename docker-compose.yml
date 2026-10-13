@@ -1,5 +1,8 @@
-# 本地依赖服务。当前只有 Neo4j（P7 知识图谱）；P8 会把网关与 agent_service 也加进来。
-# 启动：docker compose up -d neo4j      浏览器控制台：http://localhost:7474
+# 一键启动：网关 + agent_service + Neo4j
+#   1) cp .env.example .env，填好 LLM_API_KEY、AMAP_WEB_SERVICE_KEY、AMAP_JS_KEY、NEO4J_PASSWORD
+#   2) 首次需要入库（向量库在 agent_service/chroma_db，见 README）
+#   3) docker compose up -d --build        浏览器打开 http://localhost:3000
+# 只要图数据库：docker compose up -d neo4j
 services:
   neo4j:
     image: neo4j:5.26-community
@@ -21,3 +24,52 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent_service/Dockerfile
+    image: wanderai-agent
+    container_name: wanderai-agent
+    # 不发布端口：只有网关能访问（同一 compose 网络内用服务名 agent:8002）
+    expose:
+      - "8002"
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY:?请在 .env 中设置 LLM_API_KEY}
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      GRAPH__URI: bolt://neo4j:7687
+    volumes:
+      - ./agent_service/chroma_db:/app/agent_service/chroma_db      # 向量库
+      - ./data:/app/data                                           # 语料、元数据、记忆数据库
+      - ./agent_service/models:/app/agent_service/models:ro        # 本地分类模型（缺失时退回 LLM）
+      - ./logs:/app/logs
+      - ${HF_CACHE_DIR:-hf-cache}:/models/hf                       # embedding / 重排模型缓存，首次启动会下载
+    depends_on:
+      neo4j:
+        condition: service_healthy   # 图谱是可选依赖，但同时启动时等它就绪，避免启动初期的降级
+    restart: unless-stopped
+
+  gateway:
+    build: .
+    image: wanderai-gateway
+    container_name: wanderai-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      AGENT_BASE: http://agent:8002
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
+      AMAP_JS_KEY: ${AMAP_JS_KEY:-}
+      AMAP_JS_SECURITY_CODE: ${AMAP_JS_SECURITY_CODE:-}
+      # 容器里请求来自 Docker 网桥而不是 127.0.0.1，监控页需要 ADMIN_TOKEN 才能访问
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      RATE_LIMIT_API_PER_MIN: ${RATE_LIMIT_API_PER_MIN:-120}
+      RATE_LIMIT_HEAVY_PER_MIN: ${RATE_LIMIT_HEAVY_PER_MIN:-10}
+      HEAVY_MAX_IN_FLIGHT: ${HEAVY_MAX_IN_FLIGHT:-8}
+    depends_on:
+      agent:
+        condition: service_healthy   # agent 加载完模型、能响应后再启动网关
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

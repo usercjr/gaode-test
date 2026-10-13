@@ -1,0 +1,2 @@
+# 训练意图分类模型时才需要（python -m classifier.train.*）
+scikit-learn==1.9.1

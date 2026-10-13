@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WanderAI 运行监控</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1f2328; --muted: #6b7280; --line: #e5e7eb;
+      --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --accent: #2563eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f1115; --card: #181b21; --text: #e6e8eb; --muted: #9aa3ae; --line: #2a2f37; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--card); }
+    header h1 { font-size: 18px; margin: 0; }
+    header .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+    main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+    .card .label { color: var(--muted); font-size: 12px; }
+    .card .value { font-size: 24px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    h2 { font-size: 15px; margin: 24px 0 10px; }
+    .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    tr:last-child td { border-bottom: none; }
+    td.num, th.num { text-align: right; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+    .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+    .pill.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+    .pill.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); }
+    .pill.bad { background: color-mix(in srgb, var(--bad) 15%, transparent); }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } header { flex-wrap: wrap; } header .meta { margin-left: 0; } }
+    .empty { color: var(--muted); padding: 12px; }
+    #error { display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; color: var(--bad);
+             background: color-mix(in srgb, var(--bad) 10%, transparent); }
+    button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WanderAI 运行监控</h1>
+    <span id="ready" class="pill">检查中</span>
+    <span class="meta">每 5 秒刷新 · <span id="updated">—</span> · <button id="pause">暂停</button></span>
+  </header>
+  <main>
+    <div id="error"></div>
+    <div class="grid" id="cards"></div>
+
+    <h2>依赖状态</h2>
+    <div class="panel"><table id="deps"></table></div>
+
+    <h2>接口（网关）</h2>
+    <div class="panel"><table id="gw-routes"></table></div>
+
+    <h2>接口（Agent 服务）</h2>
+    <div class="panel"><table id="agent-routes"></table></div>
+
+    <div class="two">
+      <div>
+        <h2>LLM 调用</h2>
+        <div class="panel"><table id="llm"></table></div>
+      </div>
+      <div>
+        <h2>工具调用</h2>
+        <div class="panel"><table id="tools"></table></div>
+      </div>
+    </div>
+
+    <div class="two">
+      <div>
+        <h2>错误码</h2>
+        <div class="panel"><table id="errors"></table></div>
+      </div>
+      <div>
+        <h2>缓存与保护</h2>
+        <div class="panel"><table id="protect"></table></div>
+      </div>
+    </div>
+  </main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '—').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmt = n => n == null ? '—' : Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
+  const ms = n => n == null ? '—' : n >= 1000 ? (n / 1000).toFixed(1) + ' s' : Math.round(n) + ' ms';
+  const pct = (a, b) => b ? (100 * a / b).toFixed(1) + '%' : '—';
+  const dur = s => s < 60 ? s + ' 秒' : s < 3600 ? Math.floor(s / 60) + ' 分钟' : (s / 3600).toFixed(1) + ' 小时';
+  let token = sessionStorage.getItem('wanderai.adminToken') || new URLSearchParams(location.search).get('token') || '';
+  let paused = false;
+
+  function table(el, headers, rows, empty = '暂无数据') {
+    if (!rows.length) { el.innerHTML = `<tr><td class="empty">${empty}</td></tr>`; return; }
+    el.innerHTML = '<tr>' + headers.map(h => `<th class="${h.num ? 'num' : ''}">${h.label}</th>`).join('') + '</tr>'
+      + rows.map(r => '<tr>' + r.map((c, i) => `<td class="${headers[i].num ? 'num' : ''}">${c}</td>`).join('') + '</tr>').join('');
+  }
+
+  function card(label, value, sub = '', cls = '') {
+    return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${sub}</div></div>`;
+  }
+
+  function routeRows(routes) {
+    return Object.entries(routes || {}).map(([k, r]) => {
+      const errRate = r.count ? (r.errors_5xx / r.count) : 0;
+      return [esc(k), fmt(r.count), `<span class="${errRate > 0.05 ? 'bad' : errRate > 0 ? 'warn' : ''}">${fmt(r.errors_5xx)}</span>`,
+              fmt(r.errors_4xx), ms(r.latency_ms.p50), ms(r.latency_ms.p95), ms(r.latency_ms.p99)];
+    });
+  }
+  const routeHeaders = [{ label: '路由' }, { label: '请求', num: 1 }, { label: '5xx', num: 1 }, { label: '4xx', num: 1 },
+                        { label: 'P50', num: 1 }, { label: 'P95', num: 1 }, { label: 'P99', num: 1 }];
+
+  async function fetchJson(url) {
+    const r = await fetch(url, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 403 && url.includes('metrics')) {
+      const t = prompt((body.error && body.error.message) || '需要监控 token');
+      if (t) { token = t; sessionStorage.setItem('wanderai.adminToken', t); return fetchJson(url); }
+    }
+    return { status: r.status, body };
+  }
+
+  function render(m, ready) {
+    const gw = m.gateway || {}, ag = m.agent || {};
+    const agentDown = !!ag.error;
+    const llmTotal = Object.values(ag.llm?.by_purpose || {}).reduce((a, d) => a + d.ok + d.failed, 0);
+    const llmFailed = Object.values(ag.llm?.by_purpose || {}).reduce((a, d) => a + d.failed, 0);
+    const tokens = ag.llm?.tokens || {};
+    const breakers = ag.breakers || [];
+    const openBreakers = breakers.filter(b => b.state !== 'closed');
+    const conc = ag.llm_concurrency || {};
+    const rl = gw.rate_limit || {}, gate = gw.heavy_gate || {};
+
+    $('cards').innerHTML = [
+      card('网关请求', fmt(gw.requests_total), `运行 ${dur(gw.uptime_s || 0)}`),
+      card('网关 5xx 比例', pct(gw.errors_5xx_total || 0, gw.requests_total || 0), `${fmt(gw.errors_5xx_total)} 次`,
+           (gw.errors_5xx_total / (gw.requests_total || 1)) > 0.05 ? 'bad' : ''),
+      card('处理中', fmt(gw.in_flight), `重请求 ${fmt(gate.in_flight)} / ${fmt(gate.limit)}`),
+      card('限流 / 繁忙拒绝', `${fmt((rl.rejected_api || 0) + (rl.rejected_heavy || 0))} / ${fmt(gate.rejected)}`,
+           `每 IP ${fmt(rl.api_per_min)} 次/分，重请求 ${fmt(rl.heavy_per_min)} 次/分`),
+      card('LLM 调用', fmt(llmTotal), `失败 ${pct(llmFailed, llmTotal)}`, llmFailed / (llmTotal || 1) > 0.1 ? 'bad' : ''),
+      card('LLM token', fmt((tokens.prompt || 0) + (tokens.completion || 0)), `输入 ${fmt(tokens.prompt)} · 输出 ${fmt(tokens.completion)}`),
+      card('LLM 并发', `${fmt(conc.in_use)} / ${fmt(conc.limit)}`, `排队 ${fmt(conc.waiting)}`, conc.waiting > 0 ? 'warn' : ''),
+      card('熔断器', openBreakers.length ? `${openBreakers.length} 个未闭合` : '全部闭合',
+           breakers.map(b => b.name).join(' · '), openBreakers.length ? 'bad' : 'ok'),
+    ].join('');
+
+    const agentChecks = ready?.agent?.checks || {};
+    const depRows = [['agent_service', agentDown ? '<span class="pill bad">不可达</span>' : '<span class="pill ok">正常</span>', esc(ag.error || `运行 ${dur(ag.uptime_s || 0)}`)]];
+    for (const [name, c] of Object.entries(agentChecks)) {
+      const state = c.ok === false ? 'bad' : c.available === false || c.enabled === false ? 'warn' : 'ok';
+      const label = { ok: '正常', warn: '已降级', bad: '异常' }[state];
+      const detail = Object.entries(c).filter(([k]) => !['ok'].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+      depRows.push([esc(name), `<span class="pill ${state}">${label}</span>`, esc(detail).slice(0, 160)]);
+    }
+    table($('deps'), [{ label: '组件' }, { label: '状态' }, { label: '详情' }], depRows);
+
+    table($('gw-routes'), routeHeaders, routeRows(gw.routes));
+    table($('agent-routes'), routeHeaders, routeRows(ag.routes), agentDown ? 'agent_service 不可达' : '暂无数据');
+    table($('llm'), [{ label: '用途' }, { label: '成功', num: 1 }, { label: '失败', num: 1 }, { label: 'P50', num: 1 }, { label: 'P95', num: 1 }],
+      Object.entries(ag.llm?.by_purpose || {}).map(([k, d]) => [esc(k), fmt(d.ok), `<span class="${d.failed ? 'bad' : ''}">${fmt(d.failed)}</span>`,
+        ms(d.latency_ms.p50), ms(d.latency_ms.p95)]));
+    table($('tools'), [{ label: '工具' }, { label: '成功', num: 1 }, { label: '失败', num: 1 }],
+      Object.entries(ag.tools || {}).map(([k, d]) => [esc(k), fmt(d.ok), `<span class="${d.failed ? 'bad' : ''}">${fmt(d.failed)}</span>`]));
+
+    const codes = {};
+    for (const src of [gw.error_codes || {}, ag.error_codes || {}]) for (const [k, v] of Object.entries(src)) codes[k] = (codes[k] || 0) + v;
+    table($('errors'), [{ label: '错误码' }, { label: '次数', num: 1 }],
+      Object.entries(codes).sort((a, b) => b[1] - a[1]).map(([k, v]) => [esc(k), fmt(v)]), '没有错误');
+
+    const caches = ag.caches || {};
+    const protRows = Object.entries(caches).map(([k, c]) => [`缓存 · ${esc(k)}`, `命中率 ${c.hit_rate == null ? '—' : (c.hit_rate * 100).toFixed(1) + '%'}`,
+      `${fmt(c.hits)} 命中 / ${fmt(c.misses)} 未命中 · ${fmt(c.size)}/${fmt(c.maxsize)} 条`]);
+    for (const b of breakers) {
+      const cls = b.state === 'closed' ? 'ok' : b.state === 'open' ? 'bad' : 'warn';
+      protRows.push([`熔断 · ${esc(b.name)}`, `<span class="pill ${cls}">${esc(b.state)}</span>`, `连续失败 ${fmt(b.consecutive_failures)}`]);
+    }
+    table($('protect'), [{ label: '项目' }, { label: '状态' }, { label: '详情' }], protRows);
+  }
+
+  async function tick() {
+    if (paused) return;
+    try {
+      const [m, r] = await Promise.all([fetchJson('/api/metrics'), fetchJson('/api/readyz')]);
+      if (m.status !== 200) throw new Error((m.body.error && m.body.error.message) || `HTTP ${m.status}`);
+      const ready = r.body;
+      $('ready').className = 'pill ' + (ready.ready ? 'ok' : 'bad');
+      $('ready').textContent = ready.ready ? '就绪' : '未就绪';
+      render(m.body, ready);
+      $('error').style.display = 'none';
+      $('updated').textContent = new Date().toLocaleTimeString('zh-CN');
+    } catch (e) {
+      $('error').style.display = 'block';
+      $('error').textContent = '读取监控数据失败：' + (e.message || e);
+    }
+  }
+
+  $('pause').onclick = () => { paused = !paused; $('pause').textContent = paused ? '继续' : '暂停'; if (!paused) tick(); };
+  tick();
+  setInterval(tick, 5000);
+</script>
+</body>
+</html>

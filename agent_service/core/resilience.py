@@ -15,6 +15,14 @@ _sleep = asyncio.sleep
 _now = time.monotonic
 
 
+class CircuitOpenError(AppError):
+    """熔断器打开时的拒绝。错误码沿用对应服务的“暂时不可用”（对用户而言可稍后重试），
+    但重试逻辑必须立即放弃：冷却期内再试也一定被拒，退避等待只会拖慢失败（压测中实测多耗 1~1.5 秒）。"""
+
+    def __init__(self, code: ErrorCode, breaker: str):
+        super().__init__(code, detail=f"circuit open: {breaker}")
+
+
 class CircuitBreaker:
     """连续失败达到阈值后断开，冷却期内直接拒绝；冷却结束放行一次试探请求（半开）。"""
 
@@ -79,7 +87,7 @@ async def retry_async(
         try:
             return await fn()
         except AppError as e:
-            if not e.retryable or attempt == attempts:
+            if not e.retryable or attempt == attempts or isinstance(e, CircuitOpenError):
                 raise
             delay = min(max_delay_s, base_delay_s * 2 ** (attempt - 1)) * random.uniform(0.5, 1.5)
             log.warning(

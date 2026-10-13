@@ -53,6 +53,8 @@ class RetrievalConfig(BaseModel):
     reranker_max_length: int = Field(256, ge=64, le=1024)
     city_filter: bool = True  # 查询中识别到城市/省份时，只在相关笔记中检索
     metadata_path: Path = Path("data/notes_metadata.jsonl")
+    cache_size: int = Field(1024, ge=0)  # 检索结果缓存条数；0 关闭。重新入库时清空
+    cache_ttl_s: int = Field(3600, ge=0)
 
 
 class AmapConfig(BaseModel):

@@ -6,12 +6,12 @@
 """
 import asyncio
 import time
-from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from config import Settings
+from core.cache import TTLCache
 from core.errors import AppError, ErrorCode
 from core.logging import get_logger
 from core.resilience import retry_async
@@ -42,33 +42,6 @@ class RateLimiter:
             self._next = max(now, self._next) + self.interval
         if delay > 0:
             await asyncio.sleep(delay)
-
-
-class TTLCache:
-    def __init__(self, maxsize: int, ttl_s: int):
-        self.maxsize = maxsize
-        self.ttl_s = ttl_s
-        self._data: "OrderedDict[Tuple, Tuple[float, Any]]" = OrderedDict()
-        self.hits = 0
-        self.misses = 0
-
-    def get(self, key: Tuple) -> Optional[Any]:
-        item = self._data.get(key)
-        if item is None or (self.ttl_s and time.monotonic() - item[0] > self.ttl_s):
-            self._data.pop(key, None)
-            self.misses += 1
-            return None
-        self._data.move_to_end(key)
-        self.hits += 1
-        return item[1]
-
-    def set(self, key: Tuple, value: Any) -> None:
-        if self.maxsize <= 0:
-            return
-        self._data[key] = (time.monotonic(), value)
-        self._data.move_to_end(key)
-        while len(self._data) > self.maxsize:
-            self._data.popitem(last=False)
 
 
 def parse_location(text: str) -> Optional[Dict[str, float]]:

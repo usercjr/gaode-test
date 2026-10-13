@@ -16,6 +16,7 @@ from core.errors import AppError, ErrorCode
 from graph.queries import TEMPLATES, run_template
 from rag.metadata import normalize_place
 from core.logging import get_logger
+from core.metrics import metrics
 from rag.retriever import Retriever
 
 log = get_logger("agent.tools")
@@ -260,6 +261,7 @@ class ToolExecutor:
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         ctx.records.append(rec)
+        metrics.tool_call(name, rec.ok)
         log.info("tool call", extra={"tool": name, "ok": rec.ok, "empty": rec.empty, "latency_ms": rec.latency_ms,
                                      "error": rec.error or None})
 
@@ -343,6 +345,8 @@ class ToolExecutor:
             rows = await run_template(self.graph, template, place=str(args.get("place") or "").strip(),
                                       city=city, tag=str(args.get("tag") or "").strip())
         except AppError as e:
+            log.warning("graph query failed", extra={"template": template, "code": e.code.value,
+                                                     "detail": str(e.detail)[:300] if e.detail else None})
             if e.code == ErrorCode.GRAPH_UNAVAILABLE:
                 return degraded
             raise

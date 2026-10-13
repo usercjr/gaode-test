@@ -14,6 +14,7 @@
 | **动态路由** | 聊天消息按 5 类意图分发：修改行程 / 游记问答 / 地点关系 / 天气与交通 / 闲聊；本地 RoBERTa 路由模型置信度不足时交给 LLM |
 | **长期记忆** | 记住同行人、饮食、行动限制、预算、喜好等 8 类信息并在规划时遵守；写入时校验证据必须出自用户原话，过滤敏感信息，支持改口覆盖 |
 | **工程化** | 统一错误码与用户提示语；LLM / 高德 / 图谱客户端均有超时、按错误类型重试、熔断与并发控制，任一依赖失败时逐级降级；request-id 全链路追踪；配置外置 |
+| **运维** | 网关按 IP 令牌桶限流与重请求过载保护；检索结果缓存；指标接口（JSON / Prometheus）与监控页；Docker Compose 一键部署；GitHub Actions 运行测试与镜像构建 |
 
 ## 架构
 
@@ -46,10 +47,25 @@ flowchart LR
 | 长期记忆 | 不带记忆 vs 带记忆，6 个场景 × 3 轮 | 违反用户约束 14/18 → **3/18** | [memory_report](eval/memory_report.md) |
 | 知识图谱 | 只用高德周边搜索 vs 加图谱，16 个问题 × 3 次 | 有游记依据的推荐 2.2 → **5.3** 个，延迟 -33%，token -23% | [graph_report](eval/graph_report.md) |
 | 实体对齐 | 三轮人工抽检，每轮重新抽样 | 精确率 70% → **82%~88%** | [alignment_review](eval/graph_alignment_review.md) |
+| 压测 | 模拟 LLM（固定 1 秒），单机 | 聊天并发 1 → 32 无失败、吞吐受 LLM 闸门约束在 7.4 次/秒；40 个同时请求时 32 个在 0.2 秒内收到“繁忙”；熔断后失败耗时约 1.5s → **33~75ms** | [load_test](eval/load_test.md) |
 
 检索指标（nDCG / Recall / MRR）的相关性标注由 LLM 完成，人工抽检完成前不列出，见 [rag_report](eval/rag_report.md)。
 
 ## 快速开始
+
+### Docker（推荐）
+
+需要 Docker Desktop，以及 DeepSeek 与高德的 Key。
+
+```bash
+cp .env.example .env          # 填入 LLM_API_KEY、AMAP_WEB_SERVICE_KEY、AMAP_JS_KEY、NEO4J_PASSWORD、ADMIN_TOKEN
+docker compose up -d --build  # 启动网关、agent_service、Neo4j
+```
+
+浏览器打开 http://localhost:3000/。监控页是 http://localhost:3000/admin.html，打开时输入 `ADMIN_TOKEN`。
+向量库（`agent_service/chroma_db`）和知识图谱需要先按下面的本地方式入库、建图，容器会挂载这些目录。
+
+### 本地运行
 
 需要 Node 18+、Python 3.10+、[DeepSeek API Key](https://platform.deepseek.com/)（或任意 OpenAI 兼容服务）和[高德 Web 服务 Key](https://console.amap.com/)。
 
@@ -76,11 +92,14 @@ npm start                     # 网关 :3000，浏览器打开 http://localhost:
 - **本地分类模型**：模型文件体积较大，没有放进仓库。按 [agent_service/README.md](agent_service/README.md#意图分类) 训练后放到 `agent_service/models/`；缺少模型时自动改用 LLM 分类。
 
 健康检查：`GET /api/readyz`，会列出 LLM、向量库、分类模型、图谱各自的状态。
+运行指标：`GET /api/metrics`（JSON，监控页使用）或 `GET /api/metrics?format=prometheus`。
 
 ## 目录
 
 ```text
 server.js                 Node 网关
+gateway/                  限流、过载保护、指标
+admin.html                监控页
 ai-chat.html 等           前端页面
 agent_service/
   core/                   配置、日志、错误码、LLM / 高德客户端、重试与熔断
@@ -105,3 +124,4 @@ docs/                     升级规划与设计说明
 - 游记语料只有 217 篇，图谱中多数地点只被 1 篇游记提到。
 - 没有登录体系，记忆按浏览器生成的匿名 ID 隔离，仅适合演示。
 - 一次 Agent 规划约 30~50 秒；高德个人 Key 有 QPS 和日配额限制。
+- 限流、缓存与指标都在进程内，只适合单实例；多实例部署需要换成 Redis 等共享存储。

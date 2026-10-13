@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-13（P7 知识图谱完成后）
+> **文档更新时间：** 2026-10-13（P8 性能与运维完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -66,12 +66,16 @@
 
 ### 4.1 Node 网关（`server.js`）
 
-- **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。
+- **静态托管**：只开放 `ai-chat.html`、`output-map.html`、`rag-search.html` 和 `src/`；配置、数据、日志、Python 源码不对外。监控页 `admin.html` 需要 `ADMIN_TOKEN`（未设置时仅本机可访问）。
 - **request-id**：沿用前端/调用方传入的 `X-Request-ID`，否则生成；透传给 `agent_service` 并写入响应头。
 - **转发**：`/api/memory`（GET / DELETE）、`/api/chat`、`/api/plan`、`/api/classify`、`/api/itinerary`、`/api/rag/search`、`/api/rag/retrieve` → `agent_service`；`/api/plan/stream`、`/api/chat/stream` 逐块透传 SSE，浏览器断开时中止上游，透传状态码与响应体；下游不可达返回 `AGENT_UNAVAILABLE`，超时返回 `GATEWAY_TIMEOUT`。
 - **高德代理**：`GET /api/amap/{place-text|geocode|driving|walking}`，白名单接口，服务端追加 Key；高德业务错误（`status:"0"`）会记录日志。
 - **就绪检查**：`GET /api/readyz` 汇总网关与 `agent_service` 的依赖状态。
-- **启动校验**：端口、`AGENT_BASE` 非法时直接退出；未配置高德 Key 时告警。
+- **限流**（`gateway/ops.js`）：按 IP 的令牌桶，普通接口 `RATE_LIMIT_API_PER_MIN`（默认 120）次/分钟，规划 / 聊天 / 问答 `RATE_LIMIT_HEAVY_PER_MIN`（默认 10）次/分钟；超限返回 429 `RATE_LIMITED` 与 `Retry-After`。
+- **过载保护**：规划 / 聊天 / 问答全局同时进行数上限 `HEAVY_MAX_IN_FLIGHT`（默认 8），超出返回 503 `SERVER_BUSY`。
+- **指标**：`GET /api/metrics` 返回网关指标（各路由请求数、4xx/5xx、P50/P95/P99、限流与繁忙拒绝数）和 `agent_service` 指标；`?format=prometheus` 返回 Prometheus 文本。
+- **前端配置**：`GET /api/config` 下发高德 JS Key 与安全密钥（`AMAP_JS_KEY`、`AMAP_JS_SECURITY_CODE`），地图页据此动态加载 SDK。
+- **启动校验**：端口、`AGENT_BASE`、限流配置非法时直接退出；未配置高德 Key 时告警。
 
 ### 4.2 `agent_service`（Python）
 
@@ -176,13 +180,14 @@ Invoke-RestMethod http://127.0.0.1:3000/api/readyz
 
 ## 七、已知问题
 
-1. 高德 JS API 2.0 新 Key 需配置 `securityJsCode`，当前未配置。
+1. 高德 JS API 2.0 新 Key 需要安全密钥：在 `.env` 设置 `AMAP_JS_SECURITY_CODE`。
 2. Agent 规划单次约 30~50 秒、约 5 万 token；高德个人 Key 有 QPS 与日配额限制（客户端限速 3 QPS）。
 3. 行程解析逻辑在 `output-map.html`、`src/parser.js`、`example/runAmapExample.js` 中各有一份。
 4. 检索评测的相关性标注由 LLM 完成，需人工抽检 `eval/data/rag_review.csv` 后再引用数字。
 5. 交叉编码器在 CPU 上重排 20 条约 3 秒，只用于 RAG 问答页；行程规划走不重排的路径（约 30ms）。
 6. `data/travel_notes.csv` 由两个文件合并，`id` 列有重复；系统改用内容哈希作为笔记 ID，原 `id` 保留为 `csv_id`。
 7. 知识图谱实体对齐精确率约 82%~88%，剩余错误来自元数据抽取（菜名 / 工艺品被当成地点、多城市笔记归错城市）；多数地点只被 1 篇游记提到。
+8. 限流、缓存与指标都在进程内，只适合单实例部署；多实例需要换成 Redis 等共享存储。
 
 ---
 

@@ -1,7 +1,7 @@
 (function (global) {
   const DEFAULT_CITY = "北京";
   // AMAP_WEB_SERVICE_KEY is not directly used in map.js as geocoding/routing is pre-processed by runAmapExample.js
-  // AMAP_JS_KEY is injected into the HTML script tag.
+  // 高德 JS API 由页面按 /api/config 下发的 Key 动态加载（window.amapReady）
 
   // Global map instance and overlays
   let map = null;
@@ -483,6 +483,16 @@ function toggleRouteDurationLabel(polyline, map) {
     // This function is called from the HTML after DOMContentLoaded
     init: async function(tripDataJson, amapWebServiceKey, amapJsKey, initialRouteCache = {}) {
       routeCache = initialRouteCache; // Initialize route cache
+      if (global.amapReady) {
+        try {
+          await global.amapReady;
+        } catch (e) {
+          console.error(e);
+          const el = document.getElementById('map');
+          if (el) el.textContent = '地图加载失败：' + (e.message || e);
+          return;
+        }
+      }
 
       // Note: amapWebServiceKey and amapJsKey are passed but not directly used in map.js
       // as data preprocessing and AMap JS API loading are handled externally.

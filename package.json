@@ -2,7 +2,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "generate:amap": "node example/runAmapExample.js"
+    "generate:amap": "node example/runAmapExample.js",
+    "test": "node --test gateway/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
