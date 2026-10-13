@@ -1,7 +1,7 @@
 # WanderAI · 行界智能旅行助手 — 技术项目文档
 
 > **项目根目录：** `D:\gaode_test`
-> **文档更新时间：** 2026-10-13（P6 记忆完成后）
+> **文档更新时间：** 2026-10-13（P7 知识图谱完成后）
 > **覆盖范围：** 前端（`ai-chat.html` / `output-map.html` / `rag-search.html`）、Node 网关（`server.js`）、Python 服务（`agent_service`）
 > **升级规划：** 见 `docs/upgrade_plan.md`
 > **面试准备笔记（各阶段做法、决策、踩坑、简历可用数据）：** 见 `docs/interview_notes.md`
@@ -13,9 +13,10 @@
 两条能力链路：
 
 1. **旅行规划（Agent）**：本地微调模型识别风格（多标签，缺模型时退回 LLM）→ Agent 通过 Function Calling 调用笔记检索、高德 POI / 路线 / 天气 → 提交结构化行程 → 规则校验（地点真实、城市一致、交通时长）并回填问题让 LLM 修正 → 地图页直接使用已校验坐标。Agent 不可用时回退到旧的“检索笔记 + 文本生成 + 前端解析”流程。
-2. **聊天（动态路由）**：聊天框消息先由路由模型判断类型——修改行程才交给 Agent，经验问答走 RAG，“附近 / 顺不顺路”走周边搜索与路线工具，天气与交通时长走实时工具，闲聊直接回复；只有“修改行程”会改动行程。
+2. **聊天（动态路由）**：聊天框消息先由路由模型判断类型——修改行程才交给 Agent，经验问答走 RAG，“附近 / 常一起去 / 顺不顺路”先查知识图谱再用周边搜索与路线工具，天气与交通时长走实时工具，闲聊直接回复；只有“修改行程”会改动行程。
 3. **记忆**：长期记忆（同行人、饮食、行动限制、预算、节奏、喜好等，按匿名 user_id 存储）在规划与问答时作为约束注入；会话保留最近几轮原文 + 滚动摘要，含指代的追问先改写成独立问题。用户可在“我的偏好”里查看和删除。
-4. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
+4. **知识图谱**：游记里的地点对齐到高德 POI 后存入 Neo4j（地点、城市、标签、游记；共现、邻近、所属关系），以 4 个参数化 Cypher 模板作为 Agent 工具；图谱不可用时自动降级为高德周边搜索。
+5. **RAG 问答**：LLM 意图改写 → 地名过滤 + 混合检索（向量 + BM25，RRF 融合）→ bge-reranker 重排 → 基于片段的引用回答。
 
 所有 LLM 调用集中在 `agent_service`，统一经过超时、重试、熔断、并发控制与日志；Node 网关不持有 LLM 密钥。
 
@@ -121,6 +122,14 @@ RAG 调试页：展示意图、改写查询、召回数、答案（含降级说�
 - 抽取与回答并行执行，不增加回复延迟；摘要在后台执行。
 - 限制：没有登录体系，user_id 是浏览器本地生成的匿名 ID，仅适合演示。评测见 `eval/memory_report.md`。
 
+### 4.8 知识图谱（`agent_service/graph/`）
+
+- `align.py`：笔记元数据中的（地名, 城市）→ 高德 POI，结果缓存到 `data/graph/poi_alignment.jsonl`。
+- `build.py`：对齐过滤规则（类别不符、泛称片段、借名商户；三轮人工抽检迭代，见 `eval/graph_alignment_review.md`）+ 建图。规模：POI 465、City 30、Tag 18、Note 156；CO_MENTIONED 1,813、NEAR 848。
+- `queries.py`：nearby / co_visit（带直线距离）/ by_tag / evidence 四个模板；`client.py`：读超时 + 熔断 + `GRAPH_UNAVAILABLE`。
+- 部署：`docker-compose.yml` 中的 Neo4j 5.26 社区版，只绑定本机端口，密码 `NEO4J_PASSWORD` 放 `.env`。图谱是可选依赖。
+- 评测：`eval/graph_report.md`（有游记依据的推荐 2.2 → 5.3 个，延迟 -33%，token -23%；LLM 盲评不稳定，不作结论）。
+
 ## 五、配置
 
 **`.env`（密钥，不提交）**
@@ -130,6 +139,7 @@ LLM_API_KEY=your_deepseek_key_here
 AMAP_WEB_SERVICE_KEY=your_amap_web_service_key_here
 PORT=3000
 AGENT_BASE=http://127.0.0.1:8002
+NEO4J_PASSWORD=your_neo4j_password   # 可选，不配则图谱功能关闭
 ```
 
 **`config.yaml`（非敏感，可提交）**：LLM 地址/模型/超时/并发/重试/熔断参数、向量库路径与 embedding 模型、服务端口、日志级别与目录。切换 LLM 服务商只需改 `llm.base_url`、`llm.model` 和 `.env` 里的 `LLM_API_KEY`。
@@ -142,6 +152,10 @@ AGENT_BASE=http://127.0.0.1:8002
 # 1) Python 服务（:8002）
 cd D:\gaode_test\agent_service
 .\.venv-win\Scripts\python.exe app.py
+
+# （可选）知识图谱
+cd D:\gaode_test
+docker compose up -d neo4j
 
 # 2) Node 网关（:3000）
 cd D:\gaode_test
@@ -168,6 +182,7 @@ Invoke-RestMethod http://127.0.0.1:3000/api/readyz
 4. 检索评测的相关性标注由 LLM 完成，需人工抽检 `eval/data/rag_review.csv` 后再引用数字。
 5. 交叉编码器在 CPU 上重排 20 条约 3 秒，只用于 RAG 问答页；行程规划走不重排的路径（约 30ms）。
 6. `data/travel_notes.csv` 由两个文件合并，`id` 列有重复；系统改用内容哈希作为笔记 ID，原 `id` 保留为 `csv_id`。
+7. 知识图谱实体对齐精确率约 82%~88%，剩余错误来自元数据抽取（菜名 / 工艺品被当成地点、多城市笔记归错城市）；多数地点只被 1 篇游记提到。
 
 ---
 

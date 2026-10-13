@@ -161,7 +161,7 @@ cd D:\gaode_test\agent_service
 |---|---|---|
 | plan | PlanAgent，在上一版行程上修改 | 规划工具集 |
 | notes_qa | RAG 问答（混合检索 + 重排 + 引用回答），检索词自动补上行程城市 | — |
-| graph_qa | 工具问答（最多 4 轮） | poi_search / nearby_search / route_plan / search_notes |
+| graph_qa | 工具问答（最多 4 轮），优先查知识图谱 | graph_query / poi_search / nearby_search / route_plan / search_notes |
 | realtime | 工具问答（最多 4 轮） | get_weather / poi_search / route_plan |
 | chitchat | 直接简短回复 | — |
 
@@ -179,6 +179,21 @@ cd D:\gaode_test\agent_service
 置信度 < 0.7 先进“待确认”，再次提到才生效；单值键新值覆盖旧值（低置信度不能推翻已确认值）；“不喜欢 X”覆盖“喜欢 X”。
 读取：规划与工具问答时注入生效的长期记忆；含指代或很短的追问先结合上下文改写成独立问题再路由。
 记忆按前端生成的匿名 `user_id` 隔离（没有登录体系，仅适合演示）。评测：`eval/run_memory_eval.py`。
+
+## 知识图谱（可选）
+
+```powershell
+cd D:\gaode_test
+docker compose up -d neo4j                     # 需要 .env 里的 NEO4J_PASSWORD；只绑定 127.0.0.1:7474/7687
+cd agent_service
+.\.venv-win\Scripts\python.exe -m graph.align           # 地名 → 高德 POI 对齐（结果缓存在 data/graph/poi_alignment.jsonl）
+.\.venv-win\Scripts\python.exe -m graph.build --reset   # 建图，统计写到 data/graph/build_stats.json
+```
+
+节点 POI / City / Tag / Note，边 LOCATED_IN / HAS_TAG / MENTIONS / CO_MENTIONED / NEAR。
+`graph_query` 工具只能选 4 个参数化模板（nearby、co_visit、by_tag、evidence），不让 LLM 写 Cypher。
+图谱不可用时：读超时（`graph.timeout_s`，整体不超过 2 倍）→ 连续 3 次失败熔断 30 秒 → 工具返回降级提示，模型改用 nearby_search；
+`/readyz` 中 `graph.available=false`，但不影响就绪。评测：`eval/run_graph_eval.py` → `eval/graph_report.md`，对齐抽检见 `eval/graph_alignment_review.md`。
 
 ## 意图分类
 

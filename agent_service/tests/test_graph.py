@@ -84,3 +84,30 @@ def test_graph_query_normalizes_city():
     fake = _FakeGraph(rows=[{"name": "x"}])
     _exec(fake)({"template": "by_tag", "tag": "美食"})
     assert fake.calls[0]["city"] == "成都"  # “成都市” → “成都”，与图谱里的城市名一致
+
+
+def test_graph_client_read_timeout_becomes_unavailable():
+    """驱动卡住（连不上时默认自带 30 秒重试）也要在时限内转成 GRAPH_UNAVAILABLE，让调用方降级。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from core.errors import AppError, ErrorCode
+    from graph.client import GraphClient
+
+    class HangingDriver:
+        async def execute_query(self, *a, **k):
+            await asyncio.sleep(10)
+
+    g = GraphClient.__new__(GraphClient)
+    g._cfg = SimpleNamespace(timeout_s=0.05)
+    g.enabled, g._driver = True, HangingDriver()
+    from core.resilience import CircuitBreaker
+    g.breaker = CircuitBreaker("graph-test", failure_threshold=1, recovery_timeout_s=30)
+
+    async def go():
+        try:
+            await g.run("RETURN 1")
+        except AppError as e:
+            return e.code
+    assert asyncio.run(go()) == ErrorCode.GRAPH_UNAVAILABLE
+    assert not g.breaker.allow()  # 失败计入熔断

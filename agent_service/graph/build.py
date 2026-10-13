@@ -28,6 +28,7 @@ from rag.metadata import load_metadata, normalize_place
 REJECT_TYPES = ("科教文化服务;学校", "医疗保健服务", "公司企业", "商务住宅", "政府机构及社会团体",
                 "金融保险服务", "汽车服务", "汽车销售", "汽车维修", "摩托车服务")
 COMMERCIAL_TYPES = ("住宿服务", "餐饮服务", "购物服务", "生活服务", "体育休闲服务")
+LANDMARK_SUFFIXES = ("街", "街区", "步行街", "美食街", "市场", "古镇", "老街")
 TOP_TAG = {"餐饮服务": "美食", "风景名胜": "景点", "科教文化服务": "文化", "购物服务": "购物",
            "住宿服务": "住宿", "体育休闲服务": "休闲"}
 SUB_TAG = {"咖啡厅": "咖啡", "火锅店": "火锅", "博物馆": "博物馆", "公园广场": "公园", "特色商业街": "街区",
@@ -67,7 +68,9 @@ def accept(record: Dict) -> Tuple[bool, bool]:
     if pc in q and len(pc) < len(q) - 1:
         return False, False
     # 2) 查询被包含在更长的商户名里：多半是借名的店（“洱海” → “大理白族洱海渔庄店”、“蓝月谷” → “…温泉酒店”）
-    if q in pc and len(pc) - len(q) >= 3 and poi["type"].startswith(COMMERCIAL_TYPES):
+    #    但街区、步行街、美食街、市场本身就是地标（“春熙路” → “春熙路步行街”、“潘家园” → “潘家园旧货市场”），不在此列
+    if (q in pc and len(pc) - len(q) >= 3 and poi["type"].startswith(COMMERCIAL_TYPES)
+            and not pc.endswith(LANDMARK_SUFFIXES)):
         return False, False
     # 查询没写分店、结果是“XX(某某店)”：多半是连锁品牌，具体哪家店是猜的。
     # 这里必须比较完整名称：clean() 会去掉括号，“紫光园”与“紫光园(隆福寺店)”去括号后相同

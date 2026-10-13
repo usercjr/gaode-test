@@ -138,3 +138,37 @@ def test_destination_inferred_from_conversation_when_no_trip(tmp_path):
                         MemoryService(store, llm))
     out = asyncio.run(router.handle(ChatRequest(message="宽窄巷子附近有什么吃的", user_id="u1", session_id="s1")))
     assert "推荐" in out["answer"]  # 识别出成都后走工具问答，而不是反问城市
+
+
+def test_tool_markup_never_reaches_the_user():
+    """回归：DeepSeek 在禁止调用工具时偶尔把内部工具调用语法写进正文。"""
+    from agent.qa import strip_tool_markup
+
+    leaked = ('Now let me check the routes.\n<｜｜DSML｜｜ calls> <｜｜DSML｜｜ invoke name="route_plan">\n'
+              '<｜｜DSML｜｜ parameter name="origin_poi_id" string="true">B001C7WE5S</｜｜DSML｜｜ parameter>')
+    assert "DSML" not in strip_tool_markup(leaked)
+    assert strip_tool_markup("<｜｜DSML｜｜ calls>B001</｜｜DSML｜｜ calls>") == ""
+    assert strip_tool_markup("宽窄巷子附近推荐：A、B") == "宽窄巷子附近推荐：A、B"
+
+
+def test_last_round_has_no_tools_and_answer_is_sanitized():
+    from agent.qa import FALLBACK, answer_with_tools
+    from agent.tools import PlanContext
+
+    class LoopingLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, **kw):
+            self.calls.append(kw)
+            if kw.get("tools"):  # 一直想调工具
+                return {"message": {"content": "", "tool_calls": [
+                    {"id": f"c{len(self.calls)}", "type": "function",
+                     "function": {"name": "poi_search", "arguments": '{"keyword": "宽窄巷子"}'}}]}, "usage": {}}
+            return {"message": {"content": "<｜｜DSML｜｜ calls>B1</｜｜DSML｜｜ calls>"}, "usage": {}}
+
+    llm, amap = LoopingLLM(), FakeAmap()
+    out = asyncio.run(answer_with_tools(llm, ToolExecutor(amap, retriever=None), PlanContext(destination="成都"),
+                                        "sys", "宽窄巷子附近有什么", ["poi_search"], max_rounds=3))
+    assert "tools" not in llm.calls[-1]          # 最后一轮不给工具
+    assert out["answer"] == FALLBACK             # 只剩标记时返回兜底文案，而不是把标记给用户

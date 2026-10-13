@@ -29,10 +29,12 @@ TEMPLATES: Dict[str, str] = {
     "co_visit": """
         CALL () { """ + _FIND + """ }
         MATCH (p)-[c:CO_MENTIONED]-(q:POI)
-        OPTIONAL MATCH (p)-[n:NEAR]-(q)
-        RETURN p.name AS center, q.name AS name, c.count AS together, n.distance_m AS distance_m,
+        // 一起出现 ≠ 顺路：总是算出直线距离，让模型能区分“常一起去”和“离得近”
+        WITH p, q, c, toInteger(point.distance(point({longitude: p.lng, latitude: p.lat}),
+                                               point({longitude: q.lng, latitude: q.lat}))) AS distance_m
+        RETURN p.name AS center, q.name AS name, c.count AS together, distance_m,
                COUNT { (:Note)-[:MENTIONS]->(q) } AS mentions
-        ORDER BY together DESC, mentions DESC LIMIT $limit""",
+        ORDER BY together DESC, distance_m LIMIT $limit""",
     # 某城市某类地点，按被提到次数排序
     "by_tag": """
         MATCH (c:City {name: $city})<-[:LOCATED_IN]-(q:POI)-[:HAS_TAG]->(:Tag {name: $tag})
