@@ -16,7 +16,6 @@ from core.logging import get_logger
 log = get_logger("classifier")
 
 
-
 class ClassifierService:
     def __init__(self, llm: LLMClient, models_dir: Path, style_model: str, route_model: str,
                  route_confidence: float = 0.97):
