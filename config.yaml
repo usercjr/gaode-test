@@ -54,6 +54,13 @@ memory:
   enabled: true
   db_path: data/memory.sqlite3      # 长期记忆与会话记录（不入库）
 
+graph:
+  enabled: true                     # Neo4j 不可用时自动降级为高德周边搜索
+  uri: bolt://127.0.0.1:7687        # 密码在 .env 的 NEO4J_PASSWORD
+  user: neo4j
+  timeout_s: 3
+  near_radius_m: 1500
+
 server:
   host: 127.0.0.1
   port: 8002

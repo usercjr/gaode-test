@@ -32,6 +32,7 @@ from rag.ingest import load_csv_records
 from rag.pipeline import RagPipeline
 from rag.retriever import Retriever
 from rag.store import VectorStore
+from graph.client import GraphClient
 from memory.service import MemoryService
 from memory.store import MemoryStore
 
@@ -50,6 +51,7 @@ class Services:
     classifier: ClassifierService
     router: ChatRouter
     memory: Optional[MemoryService]
+    graph: GraphClient
 
 
 services = Services()
@@ -68,7 +70,8 @@ async def lifespan(_app: FastAPI):
                                             settings.classifier.style_model, settings.classifier.route_model,
                                             settings.classifier.route_confidence)
     services.amap = AmapClient(settings)
-    executor = ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k)
+    services.graph = GraphClient(settings)
+    executor = ToolExecutor(services.amap, services.retriever, settings.agent.notes_top_k, services.graph)
     services.agent = PlanAgent(services.llm, services.amap, executor, settings.agent)
     services.memory = (MemoryService(MemoryStore(settings.memory.db_path), services.llm)
                        if settings.memory.enabled else None)
@@ -90,6 +93,7 @@ async def lifespan(_app: FastAPI):
     yield
     await services.llm.aclose()
     await services.amap.aclose()
+    await services.graph.close()
     if services.memory:
         services.memory.store.close()
 
@@ -231,6 +235,16 @@ async def readyz():
         "breaker": breaker,
     }
     checks["classifier"] = {"ok": True, **services.classifier.status()}  # 模型缺失时退回 LLM，不影响就绪
+    # 图谱是可选依赖：不可用时 graph_qa 降级为高德周边搜索，不影响就绪状态
+    try:
+        if services.graph.enabled:
+            graph = {"ok": True, "enabled": True, "available": True, **(await services.graph.ping())}
+        else:
+            graph = {"ok": True, "enabled": False}
+    except AppError as e:
+        graph = {"ok": True, "enabled": True, "available": False, "error": e.code.value,
+                 "breaker": services.graph.breaker.snapshot()}
+    checks["graph"] = graph
     checks["amap"] = {
         "ok": settings.amap_enabled,
         "configured": settings.amap_enabled,

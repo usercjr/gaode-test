@@ -32,7 +32,10 @@ ROUTE_CN = {"plan": "规划/修改行程", "notes_qa": "游记经验问答", "gr
 
 SPATIAL_SYSTEM = """你是旅行助手，回答地点关系类问题（某地附近有什么、两地顺不顺路、去了 A 还能去哪）。
 目的地：{dest}。{trip}
-必须用工具查证：附近的店用 nearby_search，两地距离和时长用 route_plan（先用 poi_search 拿到 poi_id）。
+必须用工具查证：
+- 先用 graph_query 查游记知识图谱（附近被推荐的地点用 nearby，“去了 A 还能去哪”用 co_visit），结果带“被几篇游记提到”；
+- 图谱没有结果或不可用时，附近的店用 nearby_search；两地距离和时长用 route_plan（先用 poi_search 拿到 poi_id）。
+来自图谱的推荐请注明“X 篇游记提到”。
 不要编造距离、评分和人均；回答简洁，列出 3~5 个具体结果（名称、距离、评分或人均），最后给一句建议。"""
 
 REALTIME_SYSTEM = """你是旅行助手，回答实时信息类问题（天气、两地之间交通多久）。今天是 {today}。
@@ -158,7 +161,7 @@ class ChatRouter:
             trip += "\n用户长期偏好（推荐时要考虑）：" + "；".join(memory_lines)
         if route == "graph_qa":
             system = SPATIAL_SYSTEM.format(dest=destination, trip=trip)
-            tools = ["poi_search", "nearby_search", "route_plan", "search_notes"]
+            tools = ["graph_query", "poi_search", "nearby_search", "route_plan", "search_notes"]
         else:
             system = REALTIME_SYSTEM.format(dest=destination, trip=trip, today=date.today().isoformat())
             tools = ["get_weather", "poi_search", "route_plan"]

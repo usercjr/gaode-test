@@ -74,6 +74,14 @@ class AgentConfig(BaseModel):
     temperature: float = Field(0.4, ge=0.0, le=1.5)
 
 
+class GraphConfig(BaseModel):
+    enabled: bool = True
+    uri: str = "bolt://127.0.0.1:7687"
+    user: str = "neo4j"
+    timeout_s: float = Field(3.0, gt=0)
+    near_radius_m: int = Field(1500, ge=100, le=10000)  # 建图时同城两点距离小于该值才连 NEAR 边
+
+
 class MemoryConfig(BaseModel):
     db_path: Path = Path("data/memory.sqlite3")  # 长期记忆与会话记录（不入库）
     enabled: bool = True
@@ -120,6 +128,8 @@ class Settings(BaseSettings):
     agent: AgentConfig = AgentConfig()
     classifier: ClassifierConfig = ClassifierConfig()
     memory: MemoryConfig = MemoryConfig()
+    graph: GraphConfig = GraphConfig()
+    neo4j_password: SecretStr = Field(SecretStr(""), validation_alias=AliasChoices("NEO4J_PASSWORD"))
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 
@@ -168,7 +178,7 @@ class Settings(BaseSettings):
 
     def public_view(self) -> dict:
         """可安全输出到日志/接口的配置（不含密钥）。"""
-        data = self.model_dump(mode="json", exclude={"llm_api_key", "amap_web_service_key"})
+        data = self.model_dump(mode="json", exclude={"llm_api_key", "amap_web_service_key", "neo4j_password"})
         data["llm_enabled"] = self.llm_enabled
         data["amap_enabled"] = self.amap_enabled
         return data

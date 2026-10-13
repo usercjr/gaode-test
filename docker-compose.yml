@@ -1,0 +1,23 @@
+# 本地依赖服务。当前只有 Neo4j（P7 知识图谱）；P8 会把网关与 agent_service 也加进来。
+# 启动：docker compose up -d neo4j      浏览器控制台：http://localhost:7474
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: wanderai-neo4j
+    ports:
+      - "127.0.0.1:7474:7474"   # 只绑定本机，不对局域网开放
+      - "127.0.0.1:7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?请在 .env 中设置 NEO4J_PASSWORD}
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped

@@ -12,7 +12,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from starlette.concurrency import run_in_threadpool
 
 from core.amap import AmapClient, region_prefix
-from core.errors import AppError
+from core.errors import AppError, ErrorCode
+from graph.queries import TEMPLATES, run_template
+from rag.metadata import normalize_place
 from core.logging import get_logger
 from rag.retriever import Retriever
 
@@ -95,6 +97,25 @@ TOOL_DEFS: List[Dict[str, Any]] = [
                     "radius_m": {"type": "integer", "description": "搜索半径（米），默认 1000，最大 5000"},
                 },
                 "required": ["center", "keywords"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "graph_query",
+            "description": "查询旅行知识图谱（由真实游记构建）。结果里的 mentions 表示被多少篇游记提到，代表真实旅行者的推荐度。"
+                           "模板：nearby=某地附近被游记推荐的地点；co_visit=去了某地的人通常还去哪；"
+                           "by_tag=某城市某类地点按推荐度排序；evidence=哪些游记提到了某地。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template": {"type": "string", "enum": ["nearby", "co_visit", "by_tag", "evidence"]},
+                    "place": {"type": "string", "description": "地点名（nearby / co_visit / evidence 需要）"},
+                    "tag": {"type": "string", "description": "类别，如 美食、咖啡、火锅、景点、博物馆、公园、街区、茶馆、甜品"},
+                    "city": {"type": "string", "description": "城市，默认为目的地"},
+                },
+                "required": ["template"],
             },
         },
     },
@@ -187,15 +208,17 @@ class PlanContext:
 
 
 class ToolExecutor:
-    def __init__(self, amap: AmapClient, retriever: Retriever, notes_top_k: int = 4):
+    def __init__(self, amap: AmapClient, retriever: Retriever, notes_top_k: int = 4, graph=None):
         self.amap = amap
         self.retriever = retriever
         self.notes_top_k = notes_top_k
+        self.graph = graph  # GraphClient，可为空（图谱未部署时 graph_query 返回降级提示）
         self._handlers: Dict[str, Callable[[PlanContext, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
             "search_notes": self._search_notes,
             "poi_search": self._poi_search,
             "route_plan": self._route_plan,
             "nearby_search": self._nearby_search,
+            "graph_query": self._graph_query,
             "get_weather": self._get_weather,
         }
 
@@ -307,6 +330,25 @@ class ToolExecutor:
             out.append({"poi_id": p["poi_id"], "name": p["name"], "type": p["type"].split(";")[-1],
                         "distance_m": p["distance_m"], "rating": p["rating"], "cost": p["cost"]})
         return {"ok": True, "empty": not out, "center": center["name"], "pois": out}
+
+    async def _graph_query(self, ctx: PlanContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        degraded = {"ok": False, "error": "知识图谱暂不可用", "hint": "改用 nearby_search 查附近、用 search_notes 查游记"}
+        if self.graph is None or not self.graph.enabled:
+            return degraded
+        template = str(args.get("template") or "")
+        if template not in TEMPLATES:
+            return {"ok": False, "error": f"未知模板 {template}", "hint": "模板只能是 nearby / co_visit / by_tag / evidence"}
+        city = normalize_place(str(args.get("city") or ctx.destination))
+        try:
+            rows = await run_template(self.graph, template, place=str(args.get("place") or "").strip(),
+                                      city=city, tag=str(args.get("tag") or "").strip())
+        except AppError as e:
+            if e.code == ErrorCode.GRAPH_UNAVAILABLE:
+                return degraded
+            raise
+        if not rows:
+            return {"ok": True, "empty": True, "hint": "图谱里没有相关记录（游记覆盖有限），可改用 nearby_search"}
+        return {"ok": True, "rows": rows}
 
     async def _get_weather(self, ctx: PlanContext, args: Dict[str, Any]) -> Dict[str, Any]:
         city = str(args.get("city") or "").strip()
