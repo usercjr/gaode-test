@@ -9,7 +9,7 @@ from neo4j.exceptions import Neo4jError, ServiceUnavailable
 from config import Settings
 from core.errors import AppError, ErrorCode
 from core.logging import get_logger
-from core.resilience import CircuitBreaker
+from core.resilience import CircuitBreaker, CircuitOpenError
 
 log = get_logger("graph")
 
@@ -34,7 +34,7 @@ class GraphClient:
         if not self.enabled:
             raise AppError(ErrorCode.GRAPH_UNAVAILABLE, detail="graph disabled or NEO4J_PASSWORD missing")
         if not self.breaker.allow():
-            raise AppError(ErrorCode.GRAPH_UNAVAILABLE, detail="circuit open")
+            raise CircuitOpenError(ErrorCode.GRAPH_UNAVAILABLE, "graph")
         started = time.perf_counter()
         try:
             # 注意：execute_query 的未知关键字参数会被当成 Cypher 参数，读超时要放在 Query 对象上
@@ -45,7 +45,12 @@ class GraphClient:
         except (ServiceUnavailable, OSError, asyncio.TimeoutError) as e:
             self.breaker.record_failure()
             raise AppError(ErrorCode.GRAPH_UNAVAILABLE, detail=str(e)[:200]) from e
-        except Neo4jError as e:  # 查询本身的错误（语法、约束），不代表服务挂了
+        except Neo4jError as e:
+            # 服务端事务超时属于“暂时不可用”：降级并计入熔断；其余（语法、约束）是查询本身的错误，不代表服务挂了
+            code = (e.code or "").lower()  # 如 Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration
+            if "timedout" in code or "timeout" in code:
+                self.breaker.record_failure()
+                raise AppError(ErrorCode.GRAPH_UNAVAILABLE, detail=f"query timeout: {str(e)[:200]}") from e
             raise AppError(ErrorCode.INTERNAL, "图谱查询失败", detail=str(e)[:300]) from e
         self.breaker.record_success()
         log.info("graph query", extra={"latency_ms": round((time.perf_counter() - started) * 1000),

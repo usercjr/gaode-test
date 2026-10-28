@@ -12,7 +12,8 @@ import httpx
 from config import Settings
 from core.errors import AppError, ErrorCode
 from core.logging import get_logger
-from core.resilience import CircuitBreaker, retry_async
+from core.metrics import metrics
+from core.resilience import CircuitBreaker, CircuitOpenError, retry_async
 
 log = get_logger("llm")
 
@@ -40,6 +41,8 @@ class LLMClient:
         self._endpoint = f"{self._cfg.base_url}/chat/completions"
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._cfg.timeout_s, connect=10.0))
         self._gate = asyncio.Semaphore(self._cfg.max_concurrency)
+        self._waiting = 0  # 等待并发闸门的调用数（排队长度），用于监控
+        self._in_use = 0
         # 进程内累计用量（评测时取前后差值即可得到单次请求的 token 消耗）
         self.usage_total = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
         self.breaker = CircuitBreaker(
@@ -58,6 +61,9 @@ class LLMClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    def concurrency(self) -> Dict[str, int]:
+        return {"limit": self._cfg.max_concurrency, "in_use": self._in_use, "waiting": self._waiting}
 
     async def chat(
         self,
@@ -108,17 +114,26 @@ class LLMClient:
 
     async def _call_once(self, payload: Dict[str, Any], purpose: str) -> Dict[str, Any]:
         if not self.breaker.allow():
-            raise AppError(ErrorCode.UPSTREAM_LLM_UNAVAILABLE, detail="circuit open")
+            raise CircuitOpenError(ErrorCode.UPSTREAM_LLM_UNAVAILABLE, "llm")
 
         started = time.perf_counter()
         status: Optional[int] = None
         try:
-            async with self._gate:
+            self._waiting += 1
+            try:
+                await self._gate.acquire()
+            finally:
+                self._waiting -= 1
+            self._in_use += 1
+            try:
                 resp = await self._client.post(
                     self._endpoint,
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     json=payload,
                 )
+            finally:
+                self._in_use -= 1
+                self._gate.release()
             status = resp.status_code
             if status != 200:
                 code = _classify_http_error(status, resp.text)
@@ -158,6 +173,8 @@ class LLMClient:
             "latency_ms": round((time.perf_counter() - started) * 1000),
             "ok": code is None,
         }
+        metrics.llm_call(purpose, code is None, fields["latency_ms"],
+                         int((usage or {}).get("prompt_tokens") or 0), int((usage or {}).get("completion_tokens") or 0))
         if code is None:
             self.usage_total["calls"] += 1
             self.usage_total["prompt_tokens"] += int((usage or {}).get("prompt_tokens") or 0)

@@ -1,10 +1,14 @@
-fastapi
-uvicorn
-pandas
-chromadb
-sentence-transformers
-httpx
-pydantic-settings
-pyyaml
-jieba
-rank_bm25
+# 运行依赖（版本与开发环境一致，Docker 镜像与 CI 用同一份）
+# torch 不在这里：CPU 版从 PyTorch 官方源单独安装（见 Dockerfile），否则会拉下 GPU 版的数 GB 依赖
+fastapi==0.143.0
+uvicorn==0.54.0
+pandas==3.0.6
+chromadb==1.5.9
+sentence-transformers==6.1.0
+transformers==5.19.0
+httpx==0.28.1
+pydantic-settings==2.15.0
+PyYAML==6.0.3
+jieba==0.42.1
+rank-bm25==0.2.2
+neo4j==6.4.0

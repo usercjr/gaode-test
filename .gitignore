@@ -11,3 +11,6 @@ logs/
 agent_service/models/
 data/memory.sqlite3
 data/neo4j/
+
+# 个人面试准备笔记，只保留在本地
+docs/interview_notes.md

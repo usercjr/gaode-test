@@ -1,0 +1,18 @@
+# 构建上下文里不需要的大文件与敏感文件
+.env
+.env.*
+!.env.example
+.git
+node_modules
+logs
+data
+agent_service/.venv
+agent_service/.venv-win
+agent_service/models
+agent_service/chroma_db
+**/__pycache__
+**/*.pyc
+eval
+docs
+example
+best_model

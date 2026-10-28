@@ -12,7 +12,7 @@ from typing import List, Literal, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -28,6 +28,7 @@ from core.amap import AmapClient
 from core.errors import AppError, ErrorCode, error_body
 from core.llm import LLMClient
 from core.logging import get_logger, request_id_var, setup_logging
+from core.metrics import metrics
 from rag.ingest import load_csv_records
 from rag.pipeline import RagPipeline
 from rag.retriever import Retriever
@@ -79,6 +80,10 @@ async def lifespan(_app: FastAPI):
                                  services.amap, services.memory)
     if not settings.amap_enabled:
         log.warning("AMAP_WEB_SERVICE_KEY is not set; /plan will fail")
+    metrics.register_gauge("caches", lambda: {"amap": services.amap.cache.stats(),
+                                              "retrieval": services.retriever.cache.stats()})
+    metrics.register_gauge("breakers", lambda: [services.llm.breaker.snapshot(), services.graph.breaker.snapshot()])
+    metrics.register_gauge("llm_concurrency", services.llm.concurrency)
     # 预加载 embedding 模型、向量库、BM25 索引和重排模型，避免首个请求因冷启动超时；
     # 失败不阻止启动，由 /readyz 反映，请求时会再次尝试加载
     try:
@@ -108,12 +113,16 @@ async def request_context(request: Request, call_next):
     token = request_id_var.set(rid)
     started = time.perf_counter()
     status = 500
+    metrics.request_started()
     try:
         response = await call_next(request)
         status = response.status_code
         response.headers["X-Request-ID"] = rid
         return response
     finally:
+        # 按路由模板统计（/memory/{memory_id} 而不是每个 id 一行）；未匹配的路径归为 unmatched
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        metrics.request_finished(request.method, route, status, (time.perf_counter() - started) * 1000)
         log.info(
             "access",
             extra={
@@ -137,6 +146,7 @@ def _error_response(code: ErrorCode, message: Optional[str] = None) -> JSONRespo
 
 @app.exception_handler(AppError)
 async def handle_app_error(_request: Request, exc: AppError):
+    metrics.error(exc.code.value)
     level = log.error if exc.code == ErrorCode.INTERNAL else log.warning
     level("request failed", extra={"code": exc.code.value, "detail": str(exc.detail)[:500] if exc.detail else None})
     return _error_response(exc.code, exc.message)
@@ -157,6 +167,7 @@ async def handle_http_error(_request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def handle_unexpected(_request: Request, exc: Exception):
+    metrics.error(ErrorCode.INTERNAL.value)
     log.exception("unhandled error")
     return _error_response(ErrorCode.INTERNAL)
 
@@ -210,6 +221,14 @@ class ItineraryRequest(BaseModel):
 async def healthz():
     """存活探针：进程能响应即可。"""
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def get_metrics(format: str = "json"):
+    """运行指标。format=prometheus 时返回 Prometheus 文本格式，便于接入 Prometheus / Grafana。"""
+    if format == "prometheus":
+        return PlainTextResponse(metrics.prometheus(), media_type="text/plain; version=0.0.4")
+    return metrics.snapshot()
 
 
 @app.get("/readyz")

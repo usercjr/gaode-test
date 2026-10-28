@@ -1,0 +1,394 @@
+{
+ "retrieval": {
+  "cold": [
+   {
+    "concurrency": 1,
+    "requests": 40,
+    "ok": 40,
+    "throughput_rps": 34.28,
+    "wall_s": 1.17,
+    "p50_ms": 22,
+    "p95_ms": 34,
+    "max_ms": 263,
+    "status": {
+     "200": 40
+    },
+    "routes": {}
+   },
+   {
+    "concurrency": 4,
+    "requests": 40,
+    "ok": 40,
+    "throughput_rps": 68.74,
+    "wall_s": 0.58,
+    "p50_ms": 50,
+    "p95_ms": 99,
+    "max_ms": 138,
+    "status": {
+     "200": 40
+    },
+    "routes": {}
+   },
+   {
+    "concurrency": 16,
+    "requests": 40,
+    "ok": 40,
+    "throughput_rps": 54.57,
+    "wall_s": 0.73,
+    "p50_ms": 244,
+    "p95_ms": 490,
+    "max_ms": 565,
+    "status": {
+     "200": 40
+    },
+    "routes": {}
+   }
+  ],
+  "warm": [
+   {
+    "concurrency": 1,
+    "requests": 80,
+    "ok": 80,
+    "throughput_rps": 114.35,
+    "wall_s": 0.7,
+    "p50_ms": 9,
+    "p95_ms": 11,
+    "max_ms": 13,
+    "status": {
+     "200": 80
+    },
+    "routes": {}
+   },
+   {
+    "concurrency": 4,
+    "requests": 80,
+    "ok": 80,
+    "throughput_rps": 442.86,
+    "wall_s": 0.18,
+    "p50_ms": 8,
+    "p95_ms": 16,
+    "max_ms": 25,
+    "status": {
+     "200": 80
+    },
+    "routes": {}
+   },
+   {
+    "concurrency": 16,
+    "requests": 80,
+    "ok": 80,
+    "throughput_rps": 285.01,
+    "wall_s": 0.28,
+    "p50_ms": 44,
+    "p95_ms": 155,
+    "max_ms": 206,
+    "status": {
+     "200": 80
+    },
+    "routes": {}
+   }
+  ],
+  "cache": {
+   "size": 120,
+   "maxsize": 1024,
+   "hits": 240,
+   "misses": 120,
+   "hit_rate": 0.667
+  }
+ },
+ "chat": {
+  "rows": [
+   {
+    "concurrency": 1,
+    "requests": 12,
+    "ok": 12,
+    "throughput_rps": 0.95,
+    "wall_s": 12.69,
+    "p50_ms": 1051,
+    "p95_ms": 1086,
+    "max_ms": 1100,
+    "status": {
+     "200": 12
+    },
+    "routes": {
+     "chitchat": 12
+    },
+    "llm_calls": 12,
+    "llm_max_in_flight": 1
+   },
+   {
+    "concurrency": 8,
+    "requests": 24,
+    "ok": 24,
+    "throughput_rps": 6.52,
+    "wall_s": 3.68,
+    "p50_ms": 1196,
+    "p95_ms": 1323,
+    "max_ms": 1323,
+    "status": {
+     "200": 24
+    },
+    "routes": {
+     "chitchat": 24
+    },
+    "llm_calls": 24,
+    "llm_max_in_flight": 8
+   },
+   {
+    "concurrency": 16,
+    "requests": 48,
+    "ok": 48,
+    "throughput_rps": 7.19,
+    "wall_s": 6.68,
+    "p50_ms": 2041,
+    "p95_ms": 2519,
+    "max_ms": 2559,
+    "status": {
+     "200": 48
+    },
+    "routes": {
+     "chitchat": 48
+    },
+    "llm_calls": 48,
+    "llm_max_in_flight": 8
+   },
+   {
+    "concurrency": 32,
+    "requests": 96,
+    "ok": 96,
+    "throughput_rps": 7.39,
+    "wall_s": 12.99,
+    "p50_ms": 4075,
+    "p95_ms": 4635,
+    "max_ms": 4775,
+    "status": {
+     "200": 96
+    },
+    "routes": {
+     "chitchat": 96
+    },
+    "llm_calls": 96,
+    "llm_max_in_flight": 8
+   }
+  ],
+  "llm_concurrency_limit": 8
+ },
+ "overload": {
+  "summary": {
+   "concurrency": 40,
+   "requests": 40,
+   "ok": 8,
+   "throughput_rps": 3.37,
+   "wall_s": 2.38,
+   "p50_ms": 2366,
+   "p95_ms": 2371,
+   "max_ms": 2371,
+   "status": {
+    "200": 8,
+    "503 SERVER_BUSY": 32
+   },
+   "routes": {
+    "chitchat": 8
+   }
+  },
+  "rejected_p95_ms": 173
+ },
+ "rate_limit": {
+  "rows": [
+   {
+    "i": 1,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 2,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 3,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 4,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 5,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 6,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 7,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 8,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 9,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 10,
+    "status": 200,
+    "code": "",
+    "retry_after": null
+   },
+   {
+    "i": 11,
+    "status": 429,
+    "code": "RATE_LIMITED",
+    "retry_after": "6"
+   },
+   {
+    "i": 12,
+    "status": 429,
+    "code": "RATE_LIMITED",
+    "retry_after": "6"
+   },
+   {
+    "i": 13,
+    "status": 429,
+    "code": "RATE_LIMITED",
+    "retry_after": "6"
+   },
+   {
+    "i": 14,
+    "status": 429,
+    "code": "RATE_LIMITED",
+    "retry_after": "6"
+   },
+   {
+    "i": 15,
+    "status": 429,
+    "code": "RATE_LIMITED",
+    "retry_after": "6"
+   }
+  ],
+  "counts": {
+   "200": 10,
+   "429 RATE_LIMITED": 5
+  }
+ },
+ "breaker": {
+  "timeline": [
+   {
+    "i": 1,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1556,
+    "upstream_calls": 3,
+    "breaker": "closed"
+   },
+   {
+    "i": 2,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1099,
+    "upstream_calls": 2,
+    "breaker": "open"
+   },
+   {
+    "i": 3,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1531,
+    "upstream_calls": 0,
+    "breaker": "open"
+   },
+   {
+    "i": 4,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1793,
+    "upstream_calls": 1,
+    "breaker": "open"
+   },
+   {
+    "i": 5,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1012,
+    "upstream_calls": 0,
+    "breaker": "open"
+   },
+   {
+    "i": 6,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1684,
+    "upstream_calls": 0,
+    "breaker": "half_open"
+   },
+   {
+    "i": 7,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 1592,
+    "upstream_calls": 1,
+    "breaker": "open"
+   },
+   {
+    "i": 8,
+    "status": 503,
+    "code": "UPSTREAM_LLM_UNAVAILABLE",
+    "ms": 993,
+    "upstream_calls": 0,
+    "breaker": "open"
+   },
+   {
+    "i": "恢复后 1",
+    "status": 200,
+    "code": "",
+    "ms": 114,
+    "upstream_calls": 1,
+    "breaker": "closed"
+   },
+   {
+    "i": "恢复后 2",
+    "status": 200,
+    "code": "",
+    "ms": 114,
+    "upstream_calls": 1,
+    "breaker": "closed"
+   },
+   {
+    "i": "恢复后 3",
+    "status": 200,
+    "code": "",
+    "ms": 110,
+    "upstream_calls": 1,
+    "breaker": "closed"
+   }
+  ]
+ },
+ "env": {
+  "date": "2026-10-13",
+  "os": "Windows-11-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "cpu_count": 16,
+  "python": "3.13.7",
+  "node": "v22.18.0"
+ }
+}

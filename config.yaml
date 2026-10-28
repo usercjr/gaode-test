@@ -26,6 +26,8 @@ retrieval:
   reranker_max_length: 256
   city_filter: true                 # 查询里出现城市/省份时只检索相关笔记
   metadata_path: data/notes_metadata.jsonl
+  cache_size: 1024                  # 检索结果缓存（相同查询与参数直接返回）；0 关闭
+  cache_ttl_s: 3600
 
 amap:
   base_url: https://restapi.amap.com

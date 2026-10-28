@@ -111,3 +111,40 @@ def test_graph_client_read_timeout_becomes_unavailable():
             return e.code
     assert asyncio.run(go()) == ErrorCode.GRAPH_UNAVAILABLE
     assert not g.breaker.allow()  # 失败计入熔断
+
+
+def test_graph_server_timeout_becomes_unavailable():
+    """Neo4j 服务端事务超时（容器里实测出现过）应按“暂时不可用”降级，而不是报内部错误。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from neo4j.exceptions import Neo4jError
+
+    from core.errors import AppError, ErrorCode
+    from core.resilience import CircuitBreaker
+    from graph.client import GraphClient
+
+    class TimeoutDriver:
+        async def execute_query(self, *a, **k):
+            raise Neo4jError._hydrate_neo4j(code="Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration",
+                                            message="The transaction has been terminated")
+
+    class SyntaxDriver:
+        async def execute_query(self, *a, **k):
+            raise Neo4jError._hydrate_neo4j(code="Neo.ClientError.Statement.SyntaxError", message="bad")
+
+    def client(driver):
+        g = GraphClient.__new__(GraphClient)
+        g._cfg = SimpleNamespace(timeout_s=1)
+        g.enabled, g._driver = True, driver
+        g.breaker = CircuitBreaker("graph-test", failure_threshold=5, recovery_timeout_s=30)
+        return g
+
+    async def code_of(g):
+        try:
+            await g.run("RETURN 1")
+        except AppError as e:
+            return e.code
+
+    assert asyncio.run(code_of(client(TimeoutDriver()))) == ErrorCode.GRAPH_UNAVAILABLE
+    assert asyncio.run(code_of(client(SyntaxDriver()))) == ErrorCode.INTERNAL  # 查询写错不算服务不可用

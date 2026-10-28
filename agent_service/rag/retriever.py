@@ -2,11 +2,13 @@
 
 全部为同步 CPU 操作，异步层通过线程池调用。每一步都可通过参数开关，供评测脚本做消融对比。
 """
+import copy
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set
 
 from config import RetrievalConfig
+from core.cache import TTLCache
 from core.logging import get_logger
 from rag.bm25 import BM25Index, add_user_words, rrf_fuse
 from rag.metadata import PlaceMatcher, load_metadata, note_places
@@ -26,11 +28,13 @@ class Retriever:
         self._rows_by_place: Dict[str, Set[str]] = {}
         self._bm25: Optional[BM25Index] = None
         self._lock = threading.Lock()
+        self.cache = TTLCache(cfg.cache_size, cfg.cache_ttl_s)
 
     # ---------- 构建 ----------
     def load(self) -> None:
         """加载元数据、构建 BM25 索引；入库后需要重新调用。"""
         with self._lock:
+            self.cache.clear()  # 语料或元数据变了，旧结果作废
             self.metadata = load_metadata(self.cfg.metadata_path)
             self.matcher = PlaceMatcher.from_metadata(self.metadata)
             rows_by_place: Dict[str, Set[str]] = {}
@@ -79,6 +83,17 @@ class Retriever:
         rerank = rerank or self.cfg.rerank
         city_filter = self.cfg.city_filter if city_filter is None else city_filter
         candidate_k = candidate_k or self.cfg.candidate_k
+        key = (query, top_k, mode, rerank, city_filter, candidate_k, self.cfg.rrf_k, self.cfg.rerank_k)
+        cached = self.cache.get(key)
+        if cached is not None:
+            # 返回副本：调用方会往 hit 里补字段，不能改到缓存里的对象
+            return {**copy.deepcopy(cached), "timings_ms": {"cache_hit": 1}}
+        result = self._retrieve_uncached(query, top_k, mode, rerank, city_filter, candidate_k)
+        self.cache.set(key, copy.deepcopy(result))
+        return result
+
+    def _retrieve_uncached(self, query: str, top_k: int, mode: str, rerank: str, city_filter: bool,
+                           candidate_k: int) -> Dict[str, Any]:
         timings: Dict[str, int] = {}
 
         places = self.matcher.find(query) if city_filter else []
